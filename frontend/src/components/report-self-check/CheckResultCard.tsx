@@ -1,5 +1,4 @@
 import type { CheckResult } from '../../types/reportSelfCheck';
-import { CheckDetailsTable } from './CheckDetailsTable';
 import { FindingsList } from './FindingsList';
 import {
   compactDiagnostic,
@@ -94,22 +93,6 @@ function PtrClauseComparisonList({ check }: { check: CheckResult }) {
   );
 }
 
-function renderEvidenceRecord(item: Record<string, unknown>, index: number) {
-  const title = readableTitle(item, index);
-  const page = item.page ? `第 ${item.page} 页` : '';
-  const label = item.label && item.label !== title ? String(item.label) : '';
-  const value = readableText(item.value);
-
-  return (
-    <li key={`${title}-${index}`}>
-      <strong>{title}</strong>
-      {[page, label, value].filter(Boolean).map((part) => (
-        <span key={part}>{part}</span>
-      ))}
-    </li>
-  );
-}
-
 function renderMissingEvidenceCard(item: Record<string, unknown>, index: number) {
   const rawReason = String(item.reason ?? item.detail ?? item.value ?? '');
   const title = readableTitle(item, index);
@@ -162,11 +145,6 @@ export function CheckResultCard({ check }: { check: CheckResult }) {
 
       {isPtrClauseCheck ? <PtrClauseComparisonList check={check} /> : null}
 
-      <details className={isPtrClauseCheck ? 'technical-details' : undefined}>
-        <summary>{isPtrClauseCheck ? '查看技术明细' : '核对明细'}</summary>
-        <CheckDetailsTable details={check.details} />
-      </details>
-
       {check.findings.length > 0 || !isPtrClauseCheck ? (
         <section className="card-section">
           <h4>问题与风险</h4>
@@ -179,13 +157,6 @@ export function CheckResultCard({ check }: { check: CheckResult }) {
           <h4>证据不足，建议人工确认</h4>
           <div className="missing-list">{check.missing_evidence.map(renderMissingEvidenceCard)}</div>
         </section>
-      ) : null}
-
-      {check.evidence.length > 0 ? (
-        <details className="technical-details">
-          <summary>查看证据来源</summary>
-          <ul>{check.evidence.map(renderEvidenceRecord)}</ul>
-        </details>
       ) : null}
     </article>
   );

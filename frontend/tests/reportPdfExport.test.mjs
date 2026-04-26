@@ -46,6 +46,20 @@ test('buildReportExportHtml includes self-check summary and check results', () =
   assert.match(html, /window\.print/);
 });
 
+test('buildReportExportHtml hides raw internal detail field names in self-check export', () => {
+  const result = baseResult();
+  result.check_results[0].details = {
+    report_display_text: '用户真正需要看的报告文字',
+    leaf_clause_reviews: [{ ptr_display_text: '内部 PTR 文本' }],
+  };
+
+  const html = buildReportExportHtml(result, 'self');
+
+  assert.doesNotMatch(html, /report_display_text/);
+  assert.doesNotMatch(html, /leaf_clause_reviews/);
+  assert.doesNotMatch(html, /ptr_display_text/);
+});
+
 test('buildReportExportHtml includes PTR scope and leaf clause comparison columns', () => {
   const result = {
     ...baseResult(),
@@ -90,6 +104,9 @@ test('buildReportExportHtml includes PTR scope and leaf clause comparison column
   assert.match(html, /报告内容/);
   assert.match(html, /PTR 中的脉冲幅度要求/);
   assert.match(html, /报告中的脉冲幅度要求/);
+  assert.doesNotMatch(html, /leaf_clause_reviews/);
+  assert.doesNotMatch(html, /ptr_display_text/);
+  assert.doesNotMatch(html, /report_display_text/);
 });
 
 test('buildReportExportTitle creates filesystem-friendly names for both modes', () => {

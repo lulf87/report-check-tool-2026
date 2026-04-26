@@ -113,7 +113,7 @@ function checkSection(check: CheckResult, mode: ReportExportMode) {
     ${check.summary ? `<p>${escapeHtml(check.summary)}</p>` : ''}
     ${mode === 'ptr-report' && leafReviews.length > 0 ? leafReviewSection(leafReviews) : ''}
     ${findingsSection(check)}
-    ${mode === 'self' ? detailsSection(check) : ''}
+    ${missingEvidenceSection(check)}
   </section>`;
 }
 
@@ -156,13 +156,23 @@ function findingsSection(check: CheckResult) {
   </div>`;
 }
 
-function detailsSection(check: CheckResult) {
-  const entries = Object.entries(check.details);
-  if (entries.length === 0) return '';
-  return `<details open>
-    <summary>核对明细</summary>
-    ${entries.map(([key, value]) => `<div class="detail"><strong>${escapeHtml(key)}</strong><pre>${escapeHtml(formatUnknown(value))}</pre></div>`).join('')}
-  </details>`;
+function missingEvidenceSection(check: CheckResult) {
+  if (check.missing_evidence.length === 0) return '';
+  return `<div>
+    <h3>证据不足，建议人工确认</h3>
+    ${check.missing_evidence
+      .map((item, index) => {
+        const title = humanTextValue(item.title ?? item.label ?? item.source, `证据 ${index + 1}`);
+        const reason = humanTextValue(item.reason ?? item.detail ?? item.value, '未说明原因');
+        const expectedSource = humanTextValue(item.expected_source, '');
+        return `<article class="finding evidence-warning">
+          <strong>${escapeHtml(title)}</strong>
+          <p>${escapeHtml(reason)}</p>
+          ${expectedSource ? `<p class="muted">需要来源：${escapeHtml(expectedSource)}</p>` : ''}
+        </article>`;
+      })
+      .join('')}
+  </div>`;
 }
 
 function formatPages(value: unknown) {
@@ -178,16 +188,19 @@ function formatList(value: unknown) {
 function textValue(value: unknown, fallback: string) {
   if (value === null || value === undefined || value === '') return fallback;
   if (typeof value === 'string') return value;
-  return formatUnknown(value);
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  return fallback;
 }
 
 function recordsFrom(value: unknown): Record<string, unknown>[] {
   return Array.isArray(value) ? value.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object' && !Array.isArray(item)) : [];
 }
 
-function formatUnknown(value: unknown) {
+function humanTextValue(value: unknown, fallback: string) {
+  if (value === null || value === undefined || value === '') return fallback;
   if (typeof value === 'string') return value;
-  return JSON.stringify(value, null, 2) ?? '';
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  return '包含结构化诊断信息，建议重新运行或人工复核。';
 }
 
 function statusLabel(status: string) {
@@ -243,6 +256,6 @@ function printCss() {
       font-size: 12px;
     }
     .finding { border-left: 3px solid #b42318; padding-left: 10px; }
-    .detail { margin-top: 10px; }
+    .evidence-warning { border-left-color: #b7791f; }
   `;
 }
