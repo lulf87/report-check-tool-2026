@@ -43,7 +43,23 @@ test('buildReportExportHtml includes self-check summary and check results', () =
   assert.match(html, /report\.pdf/);
   assert.match(html, /首页基础字段一致性/);
   assert.match(html, /字段需复核/);
+  assert.match(html, /核对结论摘要/);
+  assert.match(html, /问题与缺漏清单/);
+  assert.match(html, /核对明细/);
+  assert.match(html, /本报告为系统辅助核对结果/);
+  assert.doesNotMatch(html, /PDF 导出/);
   assert.doesNotMatch(html, /window\.open/);
+});
+
+test('buildReportExportHtml uses a print-specific report layout instead of app chrome', () => {
+  const html = buildReportExportHtml(baseResult(), 'self');
+
+  assert.match(html, /class="report-document"/);
+  assert.match(html, /class="cover-section"/);
+  assert.match(html, /class="issue-table"/);
+  assert.match(html, /@page \{ size: A4; margin:/);
+  assert.doesNotMatch(html, /开始 PTR 核对/);
+  assert.doesNotMatch(html, /上传 PTR 与报告 PDF/);
 });
 
 test('buildReportExportHtml hides raw internal detail field names in self-check export', () => {
@@ -100,6 +116,8 @@ test('buildReportExportHtml includes PTR scope and leaf clause comparison column
   assert.match(html, /PTR 与报告核对结果/);
   assert.match(html, /ptr\.pdf/);
   assert.match(html, /首页声明条款/);
+  assert.match(html, /检验项目范围核对/);
+  assert.match(html, /逐条款对照明细/);
   assert.match(html, /PTR 内容/);
   assert.match(html, /报告内容/);
   assert.match(html, /PTR 中的脉冲幅度要求/);
@@ -107,6 +125,25 @@ test('buildReportExportHtml includes PTR scope and leaf clause comparison column
   assert.doesNotMatch(html, /leaf_clause_reviews/);
   assert.doesNotMatch(html, /ptr_display_text/);
   assert.doesNotMatch(html, /report_display_text/);
+});
+
+test('buildReportExportHtml separates system diagnostics from report content findings', () => {
+  const result = baseResult();
+  result.check_results[0].missing_evidence = [
+    {
+      label: 'codex_json',
+      reason: 'JSON parse error',
+      expected_source: 'Codex JSON output',
+    },
+  ];
+
+  const html = buildReportExportHtml(result, 'self');
+
+  assert.match(html, /系统诊断记录/);
+  assert.match(html, /系统返回结果解析失败/);
+  assert.match(html, /该部分表示系统未形成有效结构化判定/);
+  assert.doesNotMatch(html, /codex_json/);
+  assert.doesNotMatch(html, /Codex JSON output/);
 });
 
 test('buildReportExportTitle creates filesystem-friendly names for both modes', () => {

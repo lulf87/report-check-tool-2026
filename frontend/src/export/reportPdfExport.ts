@@ -1,4 +1,4 @@
-import type { CheckResult, ReportSelfCheckResult } from '../types/reportSelfCheck';
+import type { CheckResult, Finding, ReportSelfCheckResult } from '../types/reportSelfCheck';
 
 export type ReportExportMode = 'self' | 'ptr-report';
 
@@ -6,6 +6,12 @@ const STATUS_LABELS: Record<string, string> = {
   pass: '通过',
   warning: '需复核',
   error: '发现问题',
+};
+
+const CONFIDENCE_LABELS: Record<string, string> = {
+  high: '高置信度',
+  medium: '中置信度',
+  low: '低置信度',
 };
 
 export function buildReportExportTitle(result: ReportSelfCheckResult, mode: ReportExportMode) {
@@ -26,16 +32,14 @@ export function buildReportExportHtml(result: ReportSelfCheckResult, mode: Repor
   <style>${printCss()}</style>
 </head>
 <body>
-  <main>
-    <header class="report-header">
-      <p class="eyebrow">PDF 导出</p>
-      <h1>${escapeHtml(title)}</h1>
-      <p>${escapeHtml(fileLine(result, mode))}</p>
-      <p>导出时间：${escapeHtml(generatedAt)}</p>
-    </header>
+  <main class="report-document">
+    ${coverSection(result, mode, title, generatedAt)}
     ${summarySection(result)}
     ${mode === 'ptr-report' ? ptrScopeSection(result) : ''}
-    ${result.check_results.map((check) => checkSection(check, mode)).join('')}
+    ${issueListSection(result)}
+    ${detailSection(result, mode)}
+    ${systemDiagnosticsSection(result)}
+    <footer class="report-footer">本报告为系统辅助核对结果，最终结论应结合原始 PDF 和人工复核确认。</footer>
   </main>
 </body>
 </html>`;
@@ -92,109 +96,232 @@ export function printReportResultAsPdf(result: ReportSelfCheckResult, mode: Repo
   return true;
 }
 
-function fileLine(result: ReportSelfCheckResult, mode: ReportExportMode) {
-  if (mode === 'ptr-report') {
-    return `PTR：${result.ptr_file_name ?? '未返回文件名'}；报告：${result.report_file_name ?? result.file_name}`;
-  }
-  return `报告：${result.file_name}`;
-}
+function coverSection(result: ReportSelfCheckResult, mode: ReportExportMode, title: string, generatedAt: string) {
+  const fileRows =
+    mode === 'ptr-report'
+      ? [
+          ['PTR 文件', result.ptr_file_name ?? '未返回文件名'],
+          ['报告文件', result.report_file_name ?? result.file_name],
+        ]
+      : [['报告文件', result.file_name]];
+  const metaRows = [
+    ['报告编号', result.report_meta.report_number],
+    ['样品编号', result.report_meta.sample_number],
+    ['样品名称', result.report_meta.sample_name],
+    ['委托方', result.report_meta.client],
+    ['生成时间', generatedAt],
+  ].filter(([, value]) => Boolean(value));
 
-function summarySection(result: ReportSelfCheckResult) {
-  return `<section class="summary">
-    <h2>总览</h2>
-    <dl>
-      <div><dt>总体状态</dt><dd>${escapeHtml(statusLabel(result.overall_status))}</dd></div>
-      <div><dt>总项数</dt><dd>${result.summary.total_checks}</dd></div>
-      <div><dt>通过</dt><dd>${result.summary.pass_count}</dd></div>
-      <div><dt>需复核</dt><dd>${result.summary.warning_count}</dd></div>
-      <div><dt>发现问题</dt><dd>${result.summary.error_count}</dd></div>
-    </dl>
-    ${reportMetaSection(result)}
+  return `<section class="cover-section">
+    <div class="cover-header">
+      <div>
+        <p class="kicker">核对报告</p>
+        <h1>${escapeHtml(title)}</h1>
+      </div>
+      <span class="status-badge status-${statusClass(result.overall_status)}">${escapeHtml(statusLabel(result.overall_status))}</span>
+    </div>
+    <p class="cover-note">本报告为系统辅助核对结果，用于快速定位 PTR 与检验报告之间的摘录差异、缺漏条款和需人工确认事项。</p>
+    <table class="meta-table">
+      <tbody>
+        ${[...fileRows, ...metaRows].map(([label, value]) => infoRow(label, value)).join('')}
+      </tbody>
+    </table>
   </section>`;
 }
 
-function reportMetaSection(result: ReportSelfCheckResult) {
-  const meta = result.report_meta;
-  const rows = [
-    ['报告编号', meta.report_number],
-    ['样品编号', meta.sample_number],
-    ['样品名称', meta.sample_name],
-    ['委托方', meta.client],
-  ].filter(([, value]) => Boolean(value));
-  if (rows.length === 0) return '';
-  return `<dl>${rows.map(([label, value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`).join('')}</dl>`;
+function summarySection(result: ReportSelfCheckResult) {
+  return `<section class="report-section">
+    <h2>核对结论摘要</h2>
+    <div class="summary-grid">
+      ${metricBlock('总体状态', statusLabel(result.overall_status), result.overall_status)}
+      ${metricBlock('总项数', String(result.summary.total_checks))}
+      ${metricBlock('通过', String(result.summary.pass_count), 'pass')}
+      ${metricBlock('需复核', String(result.summary.warning_count), 'warning')}
+      ${metricBlock('发现问题', String(result.summary.error_count), 'error')}
+    </div>
+  </section>`;
 }
 
 function ptrScopeSection(result: ReportSelfCheckResult) {
   const scope = result.ptr_report_scope_summary;
   if (!scope) return '';
-  return `<section>
-    <h2>检验项目范围</h2>
-    <dl>
-      <div><dt>首页声明条款</dt><dd>${escapeHtml(formatList(scope.declared_clause_prefixes))}</dd></div>
-      <div><dt>报告实际条款</dt><dd>${escapeHtml(formatList(scope.actual_report_clause_prefixes))}</dd></div>
-      <div><dt>缺漏条款</dt><dd>${escapeHtml(formatList(scope.missing_declared_clause_prefixes))}</dd></div>
-      <div><dt>额外条款</dt><dd>${escapeHtml(formatList(scope.extra_report_clause_prefixes))}</dd></div>
-    </dl>
+  return `<section class="report-section">
+    <h2>检验项目范围核对</h2>
+    <table class="info-table">
+      <tbody>
+        ${infoRow('首页声明条款', formatList(scope.declared_clause_prefixes))}
+        ${infoRow('报告实际条款', formatList(scope.actual_report_clause_prefixes))}
+        ${infoRow('缺漏条款', formatList(scope.missing_declared_clause_prefixes))}
+        ${infoRow('额外条款', formatList(scope.extra_report_clause_prefixes))}
+      </tbody>
+    </table>
   </section>`;
 }
 
-function checkSection(check: CheckResult, mode: ReportExportMode) {
+function issueListSection(result: ReportSelfCheckResult) {
+  const issues = result.check_results.filter((check) => check.status !== 'pass');
+  const rows =
+    issues.length > 0
+      ? issues.map(
+          (check, index) => `<tr>
+            <td>${index + 1}</td>
+            <td>${escapeHtml(check.check_id)}</td>
+            <td>${escapeHtml(issueType(check))}</td>
+            <td>${escapeHtml(check.summary || check.check_name)}</td>
+            <td>${escapeHtml(reportPageSummary(check))}</td>
+          </tr>`,
+        )
+      : [
+          `<tr>
+            <td colspan="5" class="empty-cell">未发现需要处理的问题。</td>
+          </tr>`,
+        ];
+
+  return `<section class="report-section">
+    <h2>问题与缺漏清单</h2>
+    <table class="issue-table">
+      <thead>
+        <tr>
+          <th>序号</th>
+          <th>核对项</th>
+          <th>类型</th>
+          <th>结论摘要</th>
+          <th>页码/条款</th>
+        </tr>
+      </thead>
+      <tbody>${rows.join('')}</tbody>
+    </table>
+  </section>`;
+}
+
+function detailSection(result: ReportSelfCheckResult, mode: ReportExportMode) {
+  return mode === 'ptr-report' ? ptrDetailSection(result) : selfDetailSection(result);
+}
+
+function ptrDetailSection(result: ReportSelfCheckResult) {
+  const blocks = result.check_results
+    .filter((check) => check.check_id !== 'PTR-SCOPE-COVERAGE' && !isSystemDiagnosticCheck(check))
+    .map(ptrCheckBlock)
+    .filter(Boolean);
+
+  return `<section class="report-section page-break-before">
+    <h2>逐条款对照明细</h2>
+    ${blocks.length > 0 ? blocks.join('') : '<p class="empty-state">未返回可展示的逐条款对照内容。</p>'}
+  </section>`;
+}
+
+function selfDetailSection(result: ReportSelfCheckResult) {
+  const blocks = result.check_results
+    .filter((check) => !isSystemDiagnosticCheck(check))
+    .map((check) => genericCheckBlock(check))
+    .filter(Boolean);
+
+  return `<section class="report-section page-break-before">
+    <h2>核对明细</h2>
+    ${blocks.length > 0 ? blocks.join('') : '<p class="empty-state">未返回可展示的核对明细。</p>'}
+  </section>`;
+}
+
+function ptrCheckBlock(check: CheckResult) {
   const leafReviews = recordsFrom(check.details.leaf_clause_reviews);
-  return `<section class="check">
-    <h2>${escapeHtml(check.check_id)} ${escapeHtml(check.check_name)}</h2>
-    <p class="status">状态：${escapeHtml(statusLabel(check.status))}；置信度：${escapeHtml(check.confidence)}</p>
-    ${check.summary ? `<p>${escapeHtml(check.summary)}</p>` : ''}
-    ${mode === 'ptr-report' && leafReviews.length > 0 ? leafReviewSection(leafReviews) : ''}
-    ${findingsSection(check)}
-    ${missingEvidenceSection(check)}
-  </section>`;
+  if (leafReviews.length === 0) return genericCheckBlock(check);
+  const comparisons = recordsFrom(check.details.leaf_clause_comparisons);
+
+  return `<article class="check-block status-left-${statusClass(check.status)}">
+    ${checkHeader(check)}
+    <div class="leaf-list">
+      ${leafReviews.map((review) => leafReviewBlock(review, comparisons)).join('')}
+    </div>
+  </article>`;
 }
 
-function leafReviewSection(reviews: Record<string, unknown>[]) {
-  return `<div class="leaf-list">
-    ${reviews
-      .map((review) => {
-        const title = [review.prefix, review.title].filter(Boolean).join(' ');
-        const pages = formatPages(review.report_entry_pages);
-        const ptrText = textValue(review.ptr_display_text ?? review.ptr_requirement_text, '未提取到 PTR 内容');
-        const reportText =
-          review.report_presence === 'missing'
-            ? '报告中未检出该条款。'
-            : textValue(review.report_display_text ?? review.report_standard_requirement_text, '未提取到报告内容');
-        return `<article class="leaf">
-          <h3>${escapeHtml(title)}</h3>
-          <p class="muted">${escapeHtml(pages)}</p>
-          <div class="columns">
-            <div><h4>PTR 内容</h4><pre>${escapeHtml(ptrText)}</pre></div>
-            <div><h4>报告内容</h4><pre>${escapeHtml(reportText)}</pre></div>
-          </div>
-        </article>`;
-      })
-      .join('')}
-  </div>`;
+function leafReviewBlock(review: Record<string, unknown>, comparisons: Record<string, unknown>[]) {
+  const prefix = String(review.prefix ?? '');
+  const title = [prefix, review.title].filter(Boolean).join(' ');
+  const pages = formatPages(review.report_entry_pages);
+  const ptrText = textValue(review.ptr_display_text ?? review.ptr_requirement_text, '未提取到 PTR 内容');
+  const reportText =
+    review.report_presence === 'missing'
+      ? '报告中未检出该条款。'
+      : textValue(review.report_display_text ?? review.report_standard_requirement_text, '未提取到报告内容');
+  const comparison = comparisons.find((item) => String(item.prefix ?? item.ptr_clause_prefix ?? '') === prefix);
+  const judgement = comparison ? textValue(comparison.judgement ?? comparison.summary ?? comparison.status, '') : '';
+
+  return `<article class="leaf-block">
+    <div class="leaf-heading">
+      <h4>${escapeHtml(title || '未命名条款')}</h4>
+      <span>${escapeHtml(pages)}</span>
+    </div>
+    ${judgement ? `<p class="judgement">${escapeHtml(judgement)}</p>` : ''}
+    <div class="compare-grid">
+      <div>
+        <h5>PTR 内容</h5>
+        <pre>${escapeHtml(ptrText)}</pre>
+      </div>
+      <div>
+        <h5>报告内容</h5>
+        <pre>${escapeHtml(reportText)}</pre>
+      </div>
+    </div>
+  </article>`;
 }
 
-function findingsSection(check: CheckResult) {
-  if (check.findings.length === 0) return '';
-  return `<div>
-    <h3>问题与风险</h3>
-    ${check.findings
+function genericCheckBlock(check: CheckResult) {
+  const visibleMissingEvidence = check.missing_evidence.filter((item) => !isSystemDiagnosticItem(item));
+  const findings = findingsSection(check.findings);
+  const missing = visibleMissingEvidence.length > 0 ? missingEvidenceSection(visibleMissingEvidence) : '';
+
+  return `<article class="check-block status-left-${statusClass(check.status)}">
+    ${checkHeader(check)}
+    ${findings}
+    ${missing}
+  </article>`;
+}
+
+function checkHeader(check: CheckResult) {
+  return `<header class="check-heading">
+    <div>
+      <p class="check-id">${escapeHtml(check.check_id)}</p>
+      <h3>${escapeHtml(check.check_name)}</h3>
+    </div>
+    <div class="check-status">
+      <span class="status-badge status-${statusClass(check.status)}">${escapeHtml(statusLabel(check.status))}</span>
+      <span class="confidence">${escapeHtml(confidenceLabel(check.confidence))}</span>
+    </div>
+    ${check.summary ? `<p class="check-summary">${escapeHtml(check.summary)}</p>` : ''}
+  </header>`;
+}
+
+function findingsSection(findings: Finding[]) {
+  if (findings.length === 0) return '';
+  return `<div class="finding-list">
+    <h4>问题与风险</h4>
+    ${findings
       .map(
         (finding) => `<article class="finding">
           <strong>${escapeHtml(finding.title)}</strong>
           <p>${escapeHtml(finding.detail)}</p>
+          ${finding.pages.length > 0 ? `<p class="muted">页码：${escapeHtml(finding.pages.join('、'))}</p>` : ''}
+          ${finding.expected || finding.actual ? expectedActualTable(finding) : ''}
         </article>`,
       )
       .join('')}
   </div>`;
 }
 
-function missingEvidenceSection(check: CheckResult) {
-  if (check.missing_evidence.length === 0) return '';
-  return `<div>
-    <h3>证据不足，建议人工确认</h3>
-    ${check.missing_evidence
+function expectedActualTable(finding: Finding) {
+  return `<table class="mini-table">
+    <tbody>
+      ${finding.expected ? infoRow('应为', finding.expected) : ''}
+      ${finding.actual ? infoRow('实际', finding.actual) : ''}
+    </tbody>
+  </table>`;
+}
+
+function missingEvidenceSection(items: Record<string, unknown>[]) {
+  return `<div class="finding-list">
+    <h4>证据不足，建议人工确认</h4>
+    ${items
       .map((item, index) => {
         const title = humanTextValue(item.title ?? item.label ?? item.source, `证据 ${index + 1}`);
         const reason = humanTextValue(item.reason ?? item.detail ?? item.value, '未说明原因');
@@ -209,13 +336,67 @@ function missingEvidenceSection(check: CheckResult) {
   </div>`;
 }
 
+function systemDiagnosticsSection(result: ReportSelfCheckResult) {
+  const diagnostics = result.check_results.flatMap((check) =>
+    check.missing_evidence.filter(isSystemDiagnosticItem).map((item) => ({ check, item })),
+  );
+  if (diagnostics.length === 0) return '';
+
+  return `<section class="report-section diagnostics-section page-break-before">
+    <h2>系统诊断记录</h2>
+    <p class="section-note">该部分表示系统未形成有效结构化判定，不代表报告内容本身存在问题。</p>
+    ${diagnostics
+      .map(
+        ({ check, item }) => `<article class="diagnostic-item">
+          <strong>${escapeHtml(check.check_id)} ${escapeHtml(check.check_name)}</strong>
+          <p>系统返回结果解析失败。</p>
+          <p class="muted">${escapeHtml(formatDiagnosticReason(item))}</p>
+        </article>`,
+      )
+      .join('')}
+  </section>`;
+}
+
+function metricBlock(label: string, value: string, tone = '') {
+  return `<div class="metric ${tone ? `metric-${statusClass(tone)}` : ''}">
+    <span>${escapeHtml(label)}</span>
+    <strong>${escapeHtml(value)}</strong>
+  </div>`;
+}
+
+function infoRow(label: string, value: unknown) {
+  return `<tr><th>${escapeHtml(label)}</th><td>${escapeHtml(humanTextValue(value, '无'))}</td></tr>`;
+}
+
+function issueType(check: CheckResult) {
+  if (isSystemDiagnosticCheck(check)) return '系统诊断';
+  return check.status === 'error' ? '发现问题' : '需人工复核';
+}
+
+function reportPageSummary(check: CheckResult) {
+  const pages = new Set<string>();
+  for (const finding of check.findings) {
+    for (const page of finding.pages) {
+      pages.add(String(page));
+    }
+  }
+  for (const review of recordsFrom(check.details.leaf_clause_reviews)) {
+    for (const page of valuesFrom(review.report_entry_pages)) {
+      pages.add(String(page));
+    }
+  }
+
+  if (pages.size > 0) return `报告第 ${[...pages].join('、')} 页`;
+  return check.check_id.startsWith('PTR-') ? check.check_id.replace(/^PTR-/, '') : '未标明';
+}
+
 function formatPages(value: unknown) {
-  const pages = Array.isArray(value) ? value.map((item) => String(item)).filter(Boolean) : [];
+  const pages = valuesFrom(value);
   return pages.length > 0 ? `报告第 ${pages.join('、')} 页` : '报告未检出';
 }
 
 function formatList(value: unknown) {
-  const values = Array.isArray(value) ? value.map((item) => String(item)).filter(Boolean) : [];
+  const values = valuesFrom(value);
   return values.length > 0 ? values.join('、') : '无';
 }
 
@@ -226,10 +407,6 @@ function textValue(value: unknown, fallback: string) {
   return fallback;
 }
 
-function recordsFrom(value: unknown): Record<string, unknown>[] {
-  return Array.isArray(value) ? value.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object' && !Array.isArray(item)) : [];
-}
-
 function humanTextValue(value: unknown, fallback: string) {
   if (value === null || value === undefined || value === '') return fallback;
   if (typeof value === 'string') return value;
@@ -237,8 +414,55 @@ function humanTextValue(value: unknown, fallback: string) {
   return '包含结构化诊断信息，建议重新运行或人工复核。';
 }
 
+function valuesFrom(value: unknown) {
+  return Array.isArray(value) ? value.map((item) => String(item)).filter(Boolean) : [];
+}
+
+function recordsFrom(value: unknown): Record<string, unknown>[] {
+  return Array.isArray(value) ? value.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object' && !Array.isArray(item)) : [];
+}
+
+function isSystemDiagnosticCheck(check: CheckResult) {
+  return check.status === 'warning' && check.missing_evidence.length > 0 && check.missing_evidence.every(isSystemDiagnosticItem);
+}
+
+function isSystemDiagnosticItem(item: Record<string, unknown>) {
+  const label = String(item.label ?? '').toLowerCase();
+  const reason = String(item.reason ?? item.detail ?? item.value ?? '');
+  const expectedSource = String(item.expected_source ?? '');
+  return (
+    label === 'codex_json' ||
+    expectedSource.includes('Codex JSON') ||
+    reason.includes('OpenAI Codex') ||
+    reason.includes('"check_id"') ||
+    reason.includes('JSON parse') ||
+    reason.includes('JSON') ||
+    reason.includes('The model')
+  );
+}
+
+function formatDiagnosticReason(item: Record<string, unknown>) {
+  const reason = String(item.reason ?? item.detail ?? item.value ?? '');
+  if (reason.includes('The model') && reason.includes('does not exist')) {
+    return 'Codex 模型不可用，需检查后端模型配置后重新运行。';
+  }
+  if (reason.includes('JSON')) {
+    return '系统未能得到可用于判定的结构化结果，建议重新运行或人工确认。';
+  }
+  return '系统未能得到可用于判定的结果，建议重新运行或人工确认。';
+}
+
 function statusLabel(status: string) {
   return STATUS_LABELS[status] ?? status;
+}
+
+function confidenceLabel(confidence: string) {
+  return CONFIDENCE_LABELS[confidence] ?? confidence;
+}
+
+function statusClass(status: string) {
+  if (status === 'pass' || status === 'warning' || status === 'error') return status;
+  return 'neutral';
 }
 
 function sanitizeFileName(name: string) {
@@ -251,45 +475,217 @@ function escapeHtml(value: string) {
 
 function printCss() {
   return `
-    @page { size: A4; margin: 14mm; }
+    @page { size: A4; margin: 14mm 12mm 16mm; }
     * { box-sizing: border-box; }
     body {
       margin: 0;
-      color: #17211a;
-      font-family: "Source Han Sans SC", "Noto Sans CJK SC", "PingFang SC", "Microsoft YaHei", sans-serif;
-      line-height: 1.65;
-      background: white;
+      color: #111827;
+      background: #fff;
+      font-family: "Source Han Sans SC", "Noto Sans CJK SC", "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
+      font-size: 11.5px;
+      line-height: 1.55;
     }
-    main { display: grid; gap: 16px; }
-    section, .report-header {
+    .report-document {
+      max-width: 186mm;
+      margin: 0 auto;
+    }
+    .cover-section {
+      padding: 0 0 9mm;
+      margin: 0 0 8mm;
+      border-bottom: 2px solid #111827;
+    }
+    .cover-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 8mm;
+      margin-bottom: 5mm;
+    }
+    .kicker {
+      margin: 0 0 2mm;
+      color: #344054;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0;
+    }
+    h1, h2, h3, h4, h5, p { margin-top: 0; }
+    h1 { margin-bottom: 0; font-size: 24px; line-height: 1.25; }
+    h2 { margin-bottom: 4mm; font-size: 16px; padding-bottom: 2mm; border-bottom: 1px solid #98a2b3; }
+    h3 { margin-bottom: 2mm; font-size: 13px; }
+    h4 { margin-bottom: 2mm; font-size: 12px; }
+    h5 { margin-bottom: 1.5mm; color: #344054; font-size: 10px; }
+    .cover-note, .section-note, .muted, .confidence {
+      color: #475467;
+    }
+    .report-section {
+      margin-bottom: 8mm;
       break-inside: avoid;
-      border: 1px solid #ded6c4;
-      border-radius: 8px;
-      padding: 14px;
     }
-    h1, h2, h3, h4, p { margin-top: 0; }
-    h1 { font-size: 24px; margin-bottom: 8px; }
-    h2 { font-size: 18px; margin-bottom: 8px; }
-    h3 { font-size: 15px; margin-bottom: 6px; }
-    h4 { margin-bottom: 6px; color: #4d5a4b; }
-    .eyebrow, .muted, .status { color: #66705f; }
-    dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 0; }
-    dt { color: #66705f; font-size: 12px; }
-    dd { margin: 2px 0 0; font-weight: 700; overflow-wrap: anywhere; }
-    .leaf-list { display: grid; gap: 12px; }
-    .leaf { break-inside: avoid; border-top: 1px solid #eee5d4; padding-top: 10px; }
-    .columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      border: 1px solid #d0d5dd;
+    }
+    .metric {
+      min-height: 18mm;
+      padding: 3mm;
+      border-right: 1px solid #d0d5dd;
+    }
+    .metric:last-child { border-right: 0; }
+    .metric span {
+      display: block;
+      color: #475467;
+      font-size: 10px;
+    }
+    .metric strong {
+      display: block;
+      margin-top: 2mm;
+      font-size: 18px;
+      line-height: 1.1;
+    }
+    .metric-pass strong, .status-pass { color: #067647; }
+    .metric-warning strong, .status-warning { color: #b54708; }
+    .metric-error strong, .status-error { color: #b42318; }
+    .status-neutral { color: #344054; }
+    .status-badge {
+      display: inline-block;
+      white-space: nowrap;
+      border: 1px solid currentColor;
+      border-radius: 2px;
+      padding: 1mm 2mm;
+      font-size: 10px;
+      font-weight: 700;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+    }
+    th, td {
+      border: 1px solid #d0d5dd;
+      padding: 2mm;
+      vertical-align: top;
+      overflow-wrap: anywhere;
+    }
+    th {
+      width: 28mm;
+      background: #f2f4f7;
+      color: #344054;
+      font-weight: 700;
+      text-align: left;
+    }
+    .issue-table th {
+      width: auto;
+      text-align: left;
+    }
+    .issue-table th:first-child,
+    .issue-table td:first-child {
+      width: 12mm;
+      text-align: center;
+    }
+    .empty-cell, .empty-state {
+      color: #475467;
+    }
+    .check-block {
+      margin-bottom: 5mm;
+      border: 1px solid #d0d5dd;
+      break-inside: avoid;
+    }
+    .status-left-pass { border-left: 3px solid #067647; }
+    .status-left-warning { border-left: 3px solid #b54708; }
+    .status-left-error { border-left: 3px solid #b42318; }
+    .check-heading {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 2mm 4mm;
+      padding: 3mm;
+      border-bottom: 1px solid #e4e7ec;
+      background: #fcfcfd;
+    }
+    .check-id {
+      margin-bottom: 1mm;
+      color: #175cd3;
+      font-weight: 700;
+    }
+    .check-summary {
+      grid-column: 1 / -1;
+      margin-bottom: 0;
+      color: #344054;
+    }
+    .check-status {
+      display: flex;
+      align-items: center;
+      gap: 2mm;
+    }
+    .leaf-list, .finding-list {
+      display: grid;
+      gap: 3mm;
+      padding: 3mm;
+    }
+    .leaf-block {
+      break-inside: avoid;
+      border-top: 1px solid #e4e7ec;
+      padding-top: 3mm;
+    }
+    .leaf-block:first-child {
+      border-top: 0;
+      padding-top: 0;
+    }
+    .leaf-heading {
+      display: flex;
+      justify-content: space-between;
+      gap: 4mm;
+      margin-bottom: 2mm;
+    }
+    .leaf-heading span {
+      color: #475467;
+      white-space: nowrap;
+    }
+    .judgement {
+      margin-bottom: 2mm;
+      color: #344054;
+    }
+    .compare-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 3mm;
+    }
     pre {
       margin: 0;
+      min-height: 18mm;
       white-space: pre-wrap;
       word-break: break-word;
-      border-radius: 6px;
-      padding: 10px;
-      background: #f7f1e5;
+      border: 1px solid #e4e7ec;
+      border-radius: 2px;
+      padding: 2.5mm;
+      background: #f8fafc;
       font-family: inherit;
-      font-size: 12px;
+      font-size: 10.5px;
     }
-    .finding { border-left: 3px solid #b42318; padding-left: 10px; }
-    .evidence-warning { border-left-color: #b7791f; }
+    .finding {
+      border-left: 2px solid #b42318;
+      padding-left: 3mm;
+      break-inside: avoid;
+    }
+    .evidence-warning { border-left-color: #b54708; }
+    .mini-table { margin-top: 2mm; }
+    .diagnostics-section {
+      border-top: 1px solid #d0d5dd;
+      padding-top: 4mm;
+    }
+    .diagnostic-item {
+      margin-bottom: 3mm;
+      border-left: 2px solid #667085;
+      padding-left: 3mm;
+      break-inside: avoid;
+    }
+    .report-footer {
+      margin-top: 8mm;
+      padding-top: 3mm;
+      border-top: 1px solid #d0d5dd;
+      color: #667085;
+      font-size: 10px;
+    }
+    .page-break-before { break-before: page; }
   `;
 }
