@@ -14,6 +14,80 @@ const CONFIDENCE_LABELS: Record<string, string> = {
   low: '低置信度',
 };
 
+const DETAIL_LABELS: Record<string, string> = {
+  actual: '实际值',
+  actual_conclusion: '实际单项结论',
+  actual_report_clause_prefixes: '报告实际条款',
+  actual_value: '实际值',
+  component_name: '组件名称',
+  declared_clause_prefixes: '首页声明条款',
+  expected: '应为',
+  expected_conclusion: '应为单项结论',
+  field: '字段',
+  field_comparisons: '字段核对明细',
+  inspection_project: '检验项目',
+  judgement: '判断说明',
+  leaf_clause_comparisons: '最细条款一致性判断',
+  leaf_clause_reviews: '最细条款证据',
+  matched: '是否一致',
+  missing_declared_clause_prefixes: '缺漏条款',
+  page: '页码',
+  pages: '页码',
+  parent_prefix: '上级条款',
+  prefix: '条款号',
+  ptr_clause_prefix: 'PTR 条款',
+  ptr_display_text: 'PTR 内容',
+  ptr_page: 'PTR 页码',
+  ptr_referenced_requirement_text: 'PTR 引用内容',
+  ptr_reference_context_text: 'PTR 引用上下文',
+  ptr_requirement_text: 'PTR 要求',
+  reason: '原因',
+  report_candidate_pages: '报告候选页',
+  report_display_text: '报告内容',
+  report_entry_pages: '报告页码',
+  report_presence: '报告是否出现',
+  report_scope_text: '报告首页检验项目',
+  report_standard_requirement_text: '报告标准要求摘录',
+  source_a_name: '来源 A',
+  source_a_page: 'A 页码',
+  source_a_value: 'A 值',
+  source_b_name: '来源 B',
+  source_b_page: 'B 页码',
+  source_b_value: 'B 值',
+  status: '状态',
+  summary: '摘要',
+  test_results: '检验结果',
+  title: '标题',
+};
+
+const PREFERRED_DETAIL_COLUMNS = [
+  'sequence_number',
+  'prefix',
+  'ptr_clause_prefix',
+  'parent_prefix',
+  'field',
+  'component_name',
+  'inspection_project',
+  'page',
+  'ptr_page',
+  'report_entry_pages',
+  'report_presence',
+  'source_a_name',
+  'source_a_page',
+  'source_a_value',
+  'source_b_name',
+  'source_b_page',
+  'source_b_value',
+  'expected',
+  'actual',
+  'test_results',
+  'actual_conclusion',
+  'expected_conclusion',
+  'matched',
+  'judgement',
+  'reason',
+];
+
 export function buildReportExportTitle(result: ReportSelfCheckResult, mode: ReportExportMode) {
   const prefix = mode === 'ptr-report' ? 'PTR与报告核对' : '报告自身核对';
   return `${prefix}-${sanitizeFileName(result.report_file_name ?? result.file_name ?? 'result')}`;
@@ -200,7 +274,7 @@ function detailSection(result: ReportSelfCheckResult, mode: ReportExportMode) {
 
 function ptrDetailSection(result: ReportSelfCheckResult) {
   const blocks = result.check_results
-    .filter((check) => check.check_id !== 'PTR-SCOPE-COVERAGE' && !isSystemDiagnosticCheck(check))
+    .filter((check) => check.check_id !== 'PTR-SCOPE-COVERAGE')
     .map(ptrCheckBlock)
     .filter(Boolean);
 
@@ -212,7 +286,6 @@ function ptrDetailSection(result: ReportSelfCheckResult) {
 
 function selfDetailSection(result: ReportSelfCheckResult) {
   const blocks = result.check_results
-    .filter((check) => !isSystemDiagnosticCheck(check))
     .map((check) => genericCheckBlock(check))
     .filter(Boolean);
 
@@ -226,12 +299,15 @@ function ptrCheckBlock(check: CheckResult) {
   const leafReviews = recordsFrom(check.details.leaf_clause_reviews);
   if (leafReviews.length === 0) return genericCheckBlock(check);
   const comparisons = recordsFrom(check.details.leaf_clause_comparisons);
+  const comparisonTables = detailTablesSection(check.details, ['leaf_clause_reviews']);
 
   return `<article class="check-block status-left-${statusClass(check.status)}">
     ${checkHeader(check)}
+    ${systemDiagnosticInline(check)}
     <div class="leaf-list">
       ${leafReviews.map((review) => leafReviewBlock(review, comparisons)).join('')}
     </div>
+    ${comparisonTables}
   </article>`;
 }
 
@@ -268,11 +344,14 @@ function leafReviewBlock(review: Record<string, unknown>, comparisons: Record<st
 
 function genericCheckBlock(check: CheckResult) {
   const visibleMissingEvidence = check.missing_evidence.filter((item) => !isSystemDiagnosticItem(item));
+  const details = detailTablesSection(check.details);
   const findings = findingsSection(check.findings);
   const missing = visibleMissingEvidence.length > 0 ? missingEvidenceSection(visibleMissingEvidence) : '';
 
   return `<article class="check-block status-left-${statusClass(check.status)}">
     ${checkHeader(check)}
+    ${systemDiagnosticInline(check)}
+    ${details}
     ${findings}
     ${missing}
   </article>`;
@@ -290,6 +369,69 @@ function checkHeader(check: CheckResult) {
     </div>
     ${check.summary ? `<p class="check-summary">${escapeHtml(check.summary)}</p>` : ''}
   </header>`;
+}
+
+function systemDiagnosticInline(check: CheckResult) {
+  if (!isSystemDiagnosticCheck(check)) return '';
+  return `<div class="diagnostic-inline">
+    <strong>本项未形成结构化判定</strong>
+    <span>以下 PTR/报告内容仍按系统已提取的证据完整列出，需人工复核。</span>
+  </div>`;
+}
+
+function detailTablesSection(details: Record<string, unknown>, excludedKeys: string[] = []) {
+  const entries = Object.entries(details).filter(([, value]) => hasDisplayValue(value));
+  const visibleEntries = entries.filter(([key]) => !excludedKeys.includes(key));
+  if (visibleEntries.length === 0) return '';
+
+  return `<div class="detail-list">
+    ${visibleEntries.map(([key, value]) => detailEntry(key, value)).join('')}
+  </div>`;
+}
+
+function detailEntry(key: string, value: unknown) {
+  if (Array.isArray(value) && value.every(isRecord)) {
+    return `<section class="detail-entry">
+      <h4>${escapeHtml(labelFor(key))}</h4>
+      ${recordTable(value)}
+    </section>`;
+  }
+
+  if (isRecord(value)) {
+    return `<section class="detail-entry">
+      <h4>${escapeHtml(labelFor(key))}</h4>
+      <table class="detail-table">
+        <tbody>${Object.entries(value).map(([itemKey, itemValue]) => infoRow(labelFor(itemKey), readableValue(itemValue))).join('')}</tbody>
+      </table>
+    </section>`;
+  }
+
+  return `<section class="detail-entry">
+    <h4>${escapeHtml(labelFor(key))}</h4>
+    <table class="detail-table">
+      <tbody>${infoRow('内容', readableValue(value))}</tbody>
+    </table>
+  </section>`;
+}
+
+function recordTable(rows: Record<string, unknown>[]) {
+  if (rows.length === 0) return '<p class="empty-state">无</p>';
+  const columns = collectColumns(rows);
+  return `<table class="detail-table">
+    <thead>
+      <tr>${columns.map((column) => `<th>${escapeHtml(labelFor(column))}</th>`).join('')}</tr>
+    </thead>
+    <tbody>
+      ${rows
+        .map((row) => `<tr>${columns.map((column) => `<td>${escapeHtml(readableValue(row[column]))}</td>`).join('')}</tr>`)
+        .join('')}
+    </tbody>
+  </table>`;
+}
+
+function collectColumns(rows: Record<string, unknown>[]) {
+  const keys = new Set(rows.flatMap((row) => Object.keys(row)));
+  return [...PREFERRED_DETAIL_COLUMNS.filter((key) => keys.has(key)), ...[...keys].filter((key) => !PREFERRED_DETAIL_COLUMNS.includes(key))];
 }
 
 function findingsSection(findings: Finding[]) {
@@ -414,12 +556,39 @@ function humanTextValue(value: unknown, fallback: string) {
   return '包含结构化诊断信息，建议重新运行或人工复核。';
 }
 
+function readableValue(value: unknown): string {
+  if (value === null || value === undefined || value === '') return '未提供';
+  if (typeof value === 'boolean') return value ? '是' : '否';
+  if (typeof value === 'string' || typeof value === 'number') return String(value);
+  if (Array.isArray(value)) {
+    if (value.length === 0) return '无';
+    return value.map((item) => readableValue(item)).join('、');
+  }
+  if (isRecord(value)) {
+    return Object.entries(value)
+      .map(([key, item]) => `${labelFor(key)}：${readableValue(item)}`)
+      .join('；');
+  }
+  return String(value);
+}
+
+function hasDisplayValue(value: unknown) {
+  if (value === null || value === undefined || value === '') return false;
+  if (Array.isArray(value)) return value.length > 0;
+  if (isRecord(value)) return Object.keys(value).length > 0;
+  return true;
+}
+
 function valuesFrom(value: unknown) {
   return Array.isArray(value) ? value.map((item) => String(item)).filter(Boolean) : [];
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
 function recordsFrom(value: unknown): Record<string, unknown>[] {
-  return Array.isArray(value) ? value.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object' && !Array.isArray(item)) : [];
+  return Array.isArray(value) ? value.filter(isRecord) : [];
 }
 
 function isSystemDiagnosticCheck(check: CheckResult) {
@@ -458,6 +627,10 @@ function statusLabel(status: string) {
 
 function confidenceLabel(confidence: string) {
   return CONFIDENCE_LABELS[confidence] ?? confidence;
+}
+
+function labelFor(key: string) {
+  return DETAIL_LABELS[key] ?? key.replaceAll('_', ' ');
 }
 
 function statusClass(status: string) {
@@ -622,6 +795,21 @@ function printCss() {
       gap: 3mm;
       padding: 3mm;
     }
+    .detail-list {
+      display: grid;
+      gap: 3mm;
+      padding: 0 3mm 3mm;
+    }
+    .detail-entry {
+      break-inside: avoid;
+    }
+    .detail-table {
+      font-size: 10px;
+    }
+    .detail-table th,
+    .detail-table td {
+      padding: 1.6mm;
+    }
     .leaf-block {
       break-inside: avoid;
       border-top: 1px solid #e4e7ec;
@@ -678,6 +866,18 @@ function printCss() {
       border-left: 2px solid #667085;
       padding-left: 3mm;
       break-inside: avoid;
+    }
+    .diagnostic-inline {
+      display: grid;
+      gap: 1mm;
+      margin: 3mm;
+      border-left: 2px solid #667085;
+      padding: 2mm 3mm;
+      background: #f8fafc;
+      color: #344054;
+    }
+    .diagnostic-inline strong {
+      color: #111827;
     }
     .report-footer {
       margin-top: 8mm;

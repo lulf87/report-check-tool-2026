@@ -76,6 +76,32 @@ test('buildReportExportHtml hides raw internal detail field names in self-check 
   assert.doesNotMatch(html, /ptr_display_text/);
 });
 
+test('buildReportExportHtml includes readable self-check detail rows without raw field names', () => {
+  const result = baseResult();
+  result.check_results[0].details = {
+    field_comparisons: [
+      {
+        field: '样品名称',
+        expected: '产品 A',
+        actual: '产品 B',
+        matched: false,
+        source_a_page: 1,
+        source_b_page: 2,
+      },
+    ],
+  };
+
+  const html = buildReportExportHtml(result, 'self');
+
+  assert.match(html, /字段核对明细/);
+  assert.match(html, /样品名称/);
+  assert.match(html, /产品 A/);
+  assert.match(html, /产品 B/);
+  assert.match(html, /是否一致/);
+  assert.doesNotMatch(html, /field_comparisons/);
+  assert.doesNotMatch(html, /source_a_page/);
+});
+
 test('buildReportExportHtml includes PTR scope and leaf clause comparison columns', () => {
   const result = {
     ...baseResult(),
@@ -125,6 +151,53 @@ test('buildReportExportHtml includes PTR scope and leaf clause comparison column
   assert.doesNotMatch(html, /leaf_clause_reviews/);
   assert.doesNotMatch(html, /ptr_display_text/);
   assert.doesNotMatch(html, /report_display_text/);
+});
+
+test('buildReportExportHtml keeps full PTR comparison details even when Codex judgement is a system diagnostic', () => {
+  const result = {
+    ...baseResult(),
+    ptr_file_name: 'ptr.pdf',
+    report_file_name: 'report.pdf',
+    check_results: [
+      {
+        check_id: 'PTR-2.1',
+        check_name: 'PTR 第 2 章性能指标 vs report 标准要求摘录一致性 - 2.1',
+        status: 'warning',
+        confidence: 'low',
+        summary: 'Codex 判断结果无法解析，需人工复核。',
+        details: {
+          leaf_clause_reviews: [
+            {
+              prefix: '2.1.15',
+              title: '感知后房室间期',
+              ptr_display_text: 'PTR 表 1 对应内容：20 ... 350，允许误差 ±20ms。',
+              report_display_text: '报告表格内容：20 ... 350，允许误差 ±20ms。',
+              report_entry_pages: [30],
+            },
+          ],
+        },
+        findings: [],
+        evidence: [],
+        missing_evidence: [
+          {
+            label: 'codex_json',
+            reason: 'JSON parse error',
+            expected_source: 'Codex JSON output',
+          },
+        ],
+      },
+    ],
+  };
+
+  const html = buildReportExportHtml(result, 'ptr-report');
+
+  assert.match(html, /逐条款对照明细/);
+  assert.match(html, /2\.1\.15 感知后房室间期/);
+  assert.match(html, /PTR 表 1 对应内容：20 \.\.\. 350/);
+  assert.match(html, /报告表格内容：20 \.\.\. 350/);
+  assert.match(html, /本项未形成结构化判定/);
+  assert.match(html, /系统诊断记录/);
+  assert.doesNotMatch(html, /codex_json/);
 });
 
 test('buildReportExportHtml separates system diagnostics from report content findings', () => {
