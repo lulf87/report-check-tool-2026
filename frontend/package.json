@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:export": "rm -rf /tmp/report-pdf-export-test && tsc --module ES2022 --moduleResolution Node --target ES2022 --lib ES2022,DOM --skipLibCheck --outDir /tmp/report-pdf-export-test src/export/reportPdfExport.ts && node --test tests/reportPdfExport.test.mjs"
   },
   "dependencies": {
     "react": "^19.0.0",

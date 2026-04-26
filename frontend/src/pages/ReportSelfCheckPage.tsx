@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { getReportSelfCheckTask, startPtrReportCheck, startReportSelfCheck } from '../api/reportSelfCheck';
 import { CheckResultCard } from '../components/report-self-check/CheckResultCard';
 import { OverallSummary } from '../components/report-self-check/OverallSummary';
+import { printReportResultAsPdf } from '../export/reportPdfExport';
 import type { CheckResult, ReportSelfCheckResult, ReportSelfCheckTask } from '../types/reportSelfCheck';
 
 const POLL_INTERVAL_MS = 2000;
@@ -273,6 +274,16 @@ export function ReportSelfCheckPage() {
     }
   }
 
+  function handleExportPdf() {
+    if (!result) {
+      return;
+    }
+    const opened = printReportResultAsPdf(result, mode);
+    if (!opened) {
+      setError('浏览器阻止了 PDF 导出窗口，请允许弹出窗口后重试。');
+    }
+  }
+
   const progressPercent = task && task.total_checks ? Math.round((task.completed_checks / task.total_checks) * 100) : 0;
   const grouped = result ? groupChecks(result.check_results) : null;
   const priorityChecks = result?.check_results.filter((check) => check.status !== 'pass') ?? [];
@@ -506,8 +517,15 @@ export function ReportSelfCheckPage() {
       {result ? (
         <section className="result-area">
           <div className="result-context">
-            <p className="eyebrow">当前结果</p>
-            <h2>{copy.label}</h2>
+            <div className="result-title-row">
+              <div>
+                <p className="eyebrow">当前结果</p>
+                <h2>{copy.label}</h2>
+              </div>
+              <button className="export-button" type="button" onClick={handleExportPdf}>
+                导出 PDF
+              </button>
+            </div>
             {mode === 'ptr-report' ? (
               <p>
                 PTR：{result.ptr_file_name ?? task?.ptr_file_name ?? '未返回文件名'}；报告：
