@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { buildReportExportHtml, buildReportExportTitle } from '/tmp/report-pdf-export-test/export/reportPdfExport.js';
+import { buildReportExportHtml, buildReportExportTitle, printReportResultAsPdf } from '/tmp/report-pdf-export-test/export/reportPdfExport.js';
 
 function baseResult() {
   return {
@@ -43,7 +43,7 @@ test('buildReportExportHtml includes self-check summary and check results', () =
   assert.match(html, /report\.pdf/);
   assert.match(html, /首页基础字段一致性/);
   assert.match(html, /字段需复核/);
-  assert.match(html, /window\.print/);
+  assert.doesNotMatch(html, /window\.open/);
 });
 
 test('buildReportExportHtml hides raw internal detail field names in self-check export', () => {
@@ -112,4 +112,75 @@ test('buildReportExportHtml includes PTR scope and leaf clause comparison column
 test('buildReportExportTitle creates filesystem-friendly names for both modes', () => {
   assert.equal(buildReportExportTitle(baseResult(), 'self'), '报告自身核对-report.pdf');
   assert.equal(buildReportExportTitle(baseResult(), 'ptr-report'), 'PTR与报告核对-report.pdf');
+});
+
+test('printReportResultAsPdf prints through a hidden iframe without opening a popup window', () => {
+  const originalWindow = globalThis.window;
+  const originalDocument = globalThis.document;
+  let openCalled = false;
+  let appendCalled = false;
+  let printCalled = false;
+  let removed = false;
+  let loadCallback = null;
+
+  const iframeDocument = {
+    open() {},
+    write(html) {
+      assert.match(html, /报告自身核对结果/);
+    },
+    close() {
+      loadCallback?.();
+    },
+  };
+  const iframe = {
+    style: {},
+    contentWindow: {
+      document: iframeDocument,
+      focus() {},
+      print() {
+        printCalled = true;
+      },
+    },
+    setAttribute() {},
+    addEventListener(event, callback) {
+      assert.equal(event, 'load');
+      loadCallback = callback;
+    },
+    remove() {
+      removed = true;
+    },
+  };
+
+  globalThis.window = {
+    open() {
+      openCalled = true;
+    },
+    setTimeout(callback) {
+      callback();
+      return 1;
+    },
+  };
+  globalThis.document = {
+    body: {
+      appendChild(node) {
+        appendCalled = true;
+        assert.equal(node, iframe);
+      },
+    },
+    createElement(tagName) {
+      assert.equal(tagName, 'iframe');
+      return iframe;
+    },
+  };
+
+  try {
+    assert.equal(printReportResultAsPdf(baseResult(), 'self'), true);
+    assert.equal(openCalled, false);
+    assert.equal(appendCalled, true);
+    assert.equal(printCalled, true);
+    assert.equal(removed, true);
+  } finally {
+    globalThis.window = originalWindow;
+    globalThis.document = originalDocument;
+  }
 });

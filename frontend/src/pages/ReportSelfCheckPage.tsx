@@ -278,9 +278,9 @@ export function ReportSelfCheckPage() {
     if (!result) {
       return;
     }
-    const opened = printReportResultAsPdf(result, mode);
-    if (!opened) {
-      setError('浏览器阻止了 PDF 导出窗口，请允许弹出窗口后重试。');
+    const printed = printReportResultAsPdf(result, mode);
+    if (!printed) {
+      setError('未能打开 PDF 打印预览，请确认浏览器允许打印后重试。');
     }
   }
 

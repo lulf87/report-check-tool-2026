@@ -37,24 +37,58 @@ export function buildReportExportHtml(result: ReportSelfCheckResult, mode: Repor
     ${mode === 'ptr-report' ? ptrScopeSection(result) : ''}
     ${result.check_results.map((check) => checkSection(check, mode)).join('')}
   </main>
-  <script>
-    window.addEventListener('load', () => {
-      window.focus();
-      window.print();
-    });
-  </script>
 </body>
 </html>`;
 }
 
 export function printReportResultAsPdf(result: ReportSelfCheckResult, mode: ReportExportMode) {
-  const popup = window.open('', '_blank', 'noopener,noreferrer,width=1100,height=800');
-  if (!popup) {
+  if (typeof window === 'undefined' || typeof document === 'undefined' || !document.body) {
     return false;
   }
-  popup.document.open();
-  popup.document.write(buildReportExportHtml(result, mode));
-  popup.document.close();
+
+  const iframe = document.createElement('iframe');
+  iframe.title = 'PDF 导出打印框架';
+  iframe.setAttribute('aria-hidden', 'true');
+  Object.assign(iframe.style, {
+    position: 'fixed',
+    right: '0',
+    bottom: '0',
+    width: '0',
+    height: '0',
+    border: '0',
+    visibility: 'hidden',
+  });
+
+  document.body.appendChild(iframe);
+
+  const iframeWindow = iframe.contentWindow;
+  const iframeDocument = iframeWindow?.document;
+  if (!iframeWindow || !iframeDocument) {
+    iframe.remove();
+    return false;
+  }
+
+  const cleanup = () => {
+    window.setTimeout(() => {
+      iframe.remove();
+    }, 1000);
+  };
+
+  iframe.addEventListener(
+    'load',
+    () => {
+      window.setTimeout(() => {
+        iframeWindow.focus();
+        iframeWindow.print();
+        cleanup();
+      }, 0);
+    },
+    { once: true },
+  );
+
+  iframeDocument.open();
+  iframeDocument.write(buildReportExportHtml(result, mode));
+  iframeDocument.close();
   return true;
 }
 
