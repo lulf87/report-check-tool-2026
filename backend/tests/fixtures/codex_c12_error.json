@@ -1,0 +1,33 @@
+{
+  "check_id": "C12",
+  "check_name": "检验结果与单项结论逻辑",
+  "status": "error",
+  "confidence": "high",
+  "summary": "第 27 序号全部检验结果为 / 或 ——，但单项结论写为符合。",
+  "details": {
+    "sequence_results": [
+      {
+        "sequence_number": "27",
+        "page": 38,
+        "inspection_project": "某检验项目",
+        "test_results": ["/", "——", "/"],
+        "actual_conclusion": "符合",
+        "expected_conclusion": "/",
+        "matched": false
+      }
+    ]
+  },
+  "findings": [
+    {
+      "severity": "error",
+      "title": "单项结论逻辑错误",
+      "detail": "该序号全部检验结果为 / 或 ——，单项结论应为 /。",
+      "expected": "/",
+      "actual": "符合",
+      "pages": [38],
+      "related_fields": ["检验结果", "单项结论"]
+    }
+  ],
+  "evidence": [],
+  "missing_evidence": []
+}

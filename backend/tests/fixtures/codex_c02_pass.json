@@ -1,0 +1,25 @@
+{
+  "check_id": "C02",
+  "check_name": "首页基础字段一致性",
+  "status": "pass",
+  "confidence": "high",
+  "summary": "封面与报告首页字段一致。",
+  "details": {
+    "field_comparisons": [
+      {
+        "field": "样品名称",
+        "source_a_name": "封面",
+        "source_a_value": "射频脉冲电场消融系统",
+        "source_a_page": 1,
+        "source_b_name": "检验报告首页",
+        "source_b_value": "射频脉冲电场消融系统",
+        "source_b_page": 3,
+        "matched": true,
+        "judgement": "一致"
+      }
+    ]
+  },
+  "findings": [],
+  "evidence": [],
+  "missing_evidence": []
+}
