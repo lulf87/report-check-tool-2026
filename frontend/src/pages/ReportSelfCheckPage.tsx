@@ -1,13 +1,24 @@
 import { useEffect, useRef, useState } from 'react';
 
-import { getReportSelfCheckTask, startPtrReportCheck, startReportSelfCheck } from '../api/reportSelfCheck';
+import { getReportSelfCheckTask, startPtrReportCheck, startRecordReportCheck, startReportSelfCheck } from '../api/reportSelfCheck';
 import { CheckResultCard } from '../components/report-self-check/CheckResultCard';
 import { OverallSummary } from '../components/report-self-check/OverallSummary';
 import { printReportResultAsPdf } from '../export/reportPdfExport';
-import type { CheckResult, ReportSelfCheckResult, ReportSelfCheckTask } from '../types/reportSelfCheck';
+import type {
+  CheckResult,
+  RecordReportCheckMode,
+  ReportSelfCheckResult,
+  ReportSelfCheckTask,
+} from '../types/reportSelfCheck';
 
 const POLL_INTERVAL_MS = 2000;
-type CheckMode = 'self' | 'ptr-report';
+type CheckMode = 'self' | 'ptr-report' | 'record-report';
+const RECORD_REPORT_CONCURRENCY_MIN = 1;
+const RECORD_REPORT_CONCURRENCY_MAX = 8;
+const RECORD_REPORT_MODE_OPTIONS: Array<{ label: string; value: RecordReportCheckMode }> = [
+  { label: '快速核对（推荐）', value: 'quick' },
+  { label: '完整 Codex', value: 'full_codex' },
+];
 
 const MODE_COPY: Record<
   CheckMode,
@@ -22,6 +33,8 @@ const MODE_COPY: Record<
     loadingText: string;
     failureText: string;
     progressLabel: string;
+    priorityDescription: string;
+    warningDescription: string;
     passDescription: string;
   }
 > = {
@@ -37,6 +50,8 @@ const MODE_COPY: Record<
     loadingText: '核对中...',
     failureText: '报告自身核对失败',
     progressLabel: '报告自身核对进度',
+    priorityDescription: '以下项目需要先复核或修正，再查看通过项。',
+    warningDescription: '这些项目证据不足或存在不确定性。',
     passDescription: '这些项目未发现内部不一致。',
   },
   'ptr-report': {
@@ -51,7 +66,24 @@ const MODE_COPY: Record<
     loadingText: 'PTR 核对中...',
     failureText: 'PTR 与报告核对失败',
     progressLabel: 'PTR 与报告核对进度',
+    priorityDescription: '以下 PTR 与报告差异需要先复核或修正，再查看通过项。',
+    warningDescription: '这些项目在 PTR 与报告对照中证据不足或存在不确定性。',
     passDescription: '这些项目未发现 PTR 与报告之间的不一致。',
+  },
+  'record-report': {
+    label: '原始记录与报告核对',
+    shortLabel: '原始记录核对',
+    description: '分别上传原始记录 PDF 和检验报告 PDF，系统会对照两份文件输出核对进度、发现问题和证据明细。',
+    uploadTitle: '上传原始记录与报告 PDF',
+    waitingText: '选择原始记录和检验报告后开始核对，这里会显示当前检查项、进度和执行日志。',
+    runningText: '原始记录与报告核对进度',
+    startText: '开始原始记录核对',
+    loadingText: '原始记录核对中...',
+    failureText: '原始记录与报告核对失败',
+    progressLabel: '原始记录与报告核对进度',
+    priorityDescription: '以下原始记录与报告差异需要先复核或修正，再查看通过项。',
+    warningDescription: '这些项目在原始记录与报告对照中证据不足或存在不确定性。',
+    passDescription: '这些项目未发现原始记录与报告之间的不一致。',
   },
 };
 const ENABLED_CHECK_IDS = [
@@ -125,14 +157,18 @@ export function ReportSelfCheckPage() {
   const [mode, setMode] = useState<CheckMode>('self');
   const [file, setFile] = useState<File | null>(null);
   const [ptrFile, setPtrFile] = useState<File | null>(null);
+  const [recordFile, setRecordFile] = useState<File | null>(null);
   const [reportFile, setReportFile] = useState<File | null>(null);
   const [result, setResult] = useState<ReportSelfCheckResult | null>(null);
   const [task, setTask] = useState<ReportSelfCheckTask | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [recordReportMode, setRecordReportMode] = useState<RecordReportCheckMode>('quick');
+  const [recordReportConcurrency, setRecordReportConcurrency] = useState(4);
   const requestTokenRef = useRef(0);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const ptrFileInputRef = useRef<HTMLInputElement | null>(null);
+  const recordFileInputRef = useRef<HTMLInputElement | null>(null);
   const reportFileInputRef = useRef<HTMLInputElement | null>(null);
 
   async function applyTask(nextTask: ReportSelfCheckTask, requestToken: number, taskMode: CheckMode) {
@@ -211,9 +247,11 @@ export function ReportSelfCheckPage() {
     setMode(nextMode);
     setFile(null);
     setPtrFile(null);
+    setRecordFile(null);
     setReportFile(null);
     if (fileInputRef.current) fileInputRef.current.value = '';
     if (ptrFileInputRef.current) ptrFileInputRef.current.value = '';
+    if (recordFileInputRef.current) recordFileInputRef.current.value = '';
     if (reportFileInputRef.current) reportFileInputRef.current.value = '';
     clearTaskState(nextMode, false);
     restoreTask(nextMode);
@@ -235,19 +273,29 @@ export function ReportSelfCheckPage() {
     clearTaskState('ptr-report', true);
   }
 
+  function selectRecordFile(nextFile: File | null) {
+    if (!nextFile && recordFileInputRef.current) {
+      recordFileInputRef.current.value = '';
+    }
+    setRecordFile(nextFile);
+    clearTaskState('record-report', true);
+  }
+
   function selectReportFile(nextFile: File | null) {
     if (!nextFile && reportFileInputRef.current) {
       reportFileInputRef.current.value = '';
     }
     setReportFile(nextFile);
-    clearTaskState('ptr-report', true);
+    clearTaskState(mode === 'record-report' ? 'record-report' : 'ptr-report', true);
+  }
+
+  function updateRecordReportConcurrency(value: number) {
+    const nextValue = Math.max(RECORD_REPORT_CONCURRENCY_MIN, Math.min(RECORD_REPORT_CONCURRENCY_MAX, value));
+    setRecordReportConcurrency(nextValue);
   }
 
   async function handleRun() {
-    const canStartSelfCheck = mode === 'self' && file;
-    const canStartPtrReportCheck = mode === 'ptr-report' && ptrFile && reportFile;
-
-    if (loading || (!canStartSelfCheck && !canStartPtrReportCheck)) {
+    if (loading || !canRun) {
       return;
     }
 
@@ -259,8 +307,20 @@ export function ReportSelfCheckPage() {
     setTask(null);
 
     try {
-      const nextTask =
-        mode === 'self' ? await startReportSelfCheck(file as File) : await startPtrReportCheck(ptrFile as File, reportFile as File);
+      let nextTask: ReportSelfCheckTask;
+      if (mode === 'self') {
+        if (!file) return;
+        nextTask = await startReportSelfCheck(file);
+      } else if (mode === 'ptr-report') {
+        if (!ptrFile || !reportFile) return;
+        nextTask = await startPtrReportCheck(ptrFile, reportFile);
+      } else {
+        if (!recordFile || !reportFile) return;
+        nextTask = await startRecordReportCheck(recordFile, reportFile, {
+          record_report_mode: recordReportMode,
+          record_report_concurrency: recordReportConcurrency,
+        });
+      }
       window.localStorage.setItem(getLastTaskKey(mode), nextTask.task_id);
       await applyTask(nextTask, requestToken, mode);
     } catch (caught) {
@@ -288,7 +348,16 @@ export function ReportSelfCheckPage() {
   const grouped = result ? groupChecks(result.check_results) : null;
   const priorityChecks = result?.check_results.filter((check) => check.status !== 'pass') ?? [];
   const copy = MODE_COPY[mode];
-  const canRun = mode === 'self' ? Boolean(file) : Boolean(ptrFile && reportFile);
+  const canRun =
+    mode === 'self' ? Boolean(file) : mode === 'ptr-report' ? Boolean(ptrFile && reportFile) : Boolean(recordFile && reportFile);
+  const isPtrReportMode = mode === 'ptr-report';
+  const comparisonFile = isPtrReportMode ? ptrFile : recordFile;
+  const comparisonFileInputId = isPtrReportMode ? 'ptr-file' : 'record-file';
+  const comparisonReportFileInputId = isPtrReportMode ? 'ptr-report-file' : 'record-report-file';
+  const comparisonFileInputRef = isPtrReportMode ? ptrFileInputRef : recordFileInputRef;
+  const comparisonFileTitle = isPtrReportMode ? 'PTR 产品技术要求 PDF' : '原始记录 PDF';
+  const comparisonFileHelp = isPtrReportMode ? '选择或拖入 PTR 文件。' : '选择或拖入原始记录文件。';
+  const selectComparisonFile = isPtrReportMode ? selectPtrFile : selectRecordFile;
 
   return (
     <main className="app-shell">
@@ -303,7 +372,7 @@ export function ReportSelfCheckPage() {
         </div>
         <div className="hero-card">
           <strong>{mode === 'self' ? `${ENABLED_CHECK_COUNT} 项` : '范围'}</strong>
-          <span>{mode === 'self' ? '已启用检查项' : '按首页检验项目'}</span>
+          <span>{mode === 'self' ? '已启用检查项' : mode === 'ptr-report' ? '按首页检验项目' : '按原始记录项目'}</span>
         </div>
       </section>
 
@@ -376,97 +445,150 @@ export function ReportSelfCheckPage() {
               ) : null}
             </>
           ) : (
-            <div className="dual-upload-grid">
-              <div>
-                <input
-                  className="sr-only"
-                  id="ptr-file"
-                  ref={ptrFileInputRef}
-                  type="file"
-                  accept="application/pdf,.pdf"
-                  onChange={(event) => {
-                    selectPtrFile(event.target.files?.[0] ?? null);
-                  }}
-                />
-                <label
-                  className="file-drop compact"
-                  htmlFor="ptr-file"
-                  onDragOver={(event) => {
-                    event.preventDefault();
-                  }}
-                  onDrop={(event) => {
-                    event.preventDefault();
-                    selectPtrFile(event.dataTransfer.files?.[0] ?? null);
-                  }}
-                >
-                  <span>PTR 产品技术要求 PDF</span>
-                  <small>选择或拖入 PTR 文件。</small>
-                </label>
+            <>
+              <div className="dual-upload-grid">
+                <div>
+                  <input
+                    className="sr-only"
+                    id={comparisonFileInputId}
+                    ref={comparisonFileInputRef}
+                    type="file"
+                    accept="application/pdf,.pdf"
+                    onChange={(event) => {
+                      selectComparisonFile(event.target.files?.[0] ?? null);
+                    }}
+                  />
+                  <label
+                    className="file-drop compact"
+                    htmlFor={comparisonFileInputId}
+                    onDragOver={(event) => {
+                      event.preventDefault();
+                    }}
+                    onDrop={(event) => {
+                      event.preventDefault();
+                      selectComparisonFile(event.dataTransfer.files?.[0] ?? null);
+                    }}
+                  >
+                    <span>{comparisonFileTitle}</span>
+                    <small>{comparisonFileHelp}</small>
+                  </label>
 
-                {ptrFile ? (
-                  <div className="selected-file">
-                    <div>
-                      <strong>{ptrFile.name}</strong>
-                      <span>{formatFileSize(ptrFile.size)}</span>
+                  {comparisonFile ? (
+                    <div className="selected-file">
+                      <div>
+                        <strong>{comparisonFile.name}</strong>
+                        <span>{formatFileSize(comparisonFile.size)}</span>
+                      </div>
+                      <button
+                        className="ghost-button"
+                        type="button"
+                        onClick={() => {
+                          selectComparisonFile(null);
+                        }}
+                      >
+                        清除
+                      </button>
                     </div>
-                    <button
-                      className="ghost-button"
-                      type="button"
-                      onClick={() => {
-                        selectPtrFile(null);
-                      }}
-                    >
-                      清除
-                    </button>
-                  </div>
-                ) : null}
+                  ) : null}
+                </div>
+
+                <div>
+                  <input
+                    className="sr-only"
+                    id={comparisonReportFileInputId}
+                    ref={reportFileInputRef}
+                    type="file"
+                    accept="application/pdf,.pdf"
+                    onChange={(event) => {
+                      selectReportFile(event.target.files?.[0] ?? null);
+                    }}
+                  />
+                  <label
+                    className="file-drop compact"
+                    htmlFor={comparisonReportFileInputId}
+                    onDragOver={(event) => {
+                      event.preventDefault();
+                    }}
+                    onDrop={(event) => {
+                      event.preventDefault();
+                      selectReportFile(event.dataTransfer.files?.[0] ?? null);
+                    }}
+                  >
+                    <span>检验报告 PDF</span>
+                    <small>选择或拖入检验报告文件。</small>
+                  </label>
+
+                  {reportFile ? (
+                    <div className="selected-file">
+                      <div>
+                        <strong>{reportFile.name}</strong>
+                        <span>{formatFileSize(reportFile.size)}</span>
+                      </div>
+                      <button
+                        className="ghost-button"
+                        type="button"
+                        onClick={() => {
+                          selectReportFile(null);
+                        }}
+                      >
+                        清除
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
               </div>
 
-              <div>
-                <input
-                  className="sr-only"
-                  id="ptr-report-file"
-                  ref={reportFileInputRef}
-                  type="file"
-                  accept="application/pdf,.pdf"
-                  onChange={(event) => {
-                    selectReportFile(event.target.files?.[0] ?? null);
-                  }}
-                />
-                <label
-                  className="file-drop compact"
-                  htmlFor="ptr-report-file"
-                  onDragOver={(event) => {
-                    event.preventDefault();
-                  }}
-                  onDrop={(event) => {
-                    event.preventDefault();
-                    selectReportFile(event.dataTransfer.files?.[0] ?? null);
-                  }}
-                >
-                  <span>report 检验报告 PDF</span>
-                  <small>选择或拖入检验报告文件。</small>
-                </label>
-
-                {reportFile ? (
-                  <div className="selected-file">
-                    <div>
-                      <strong>{reportFile.name}</strong>
-                      <span>{formatFileSize(reportFile.size)}</span>
+              {mode === 'record-report' ? (
+                <div className="record-report-options">
+                  <div className="record-option-row">
+                    <span>模式</span>
+                    <div className="record-mode-switch" role="radiogroup" aria-label="原始记录核对模式">
+                      {RECORD_REPORT_MODE_OPTIONS.map((option) => (
+                        <button
+                          aria-checked={recordReportMode === option.value}
+                          className={recordReportMode === option.value ? 'active' : ''}
+                          key={option.value}
+                          role="radio"
+                          type="button"
+                          onClick={() => {
+                            setRecordReportMode(option.value);
+                          }}
+                        >
+                          {option.label}
+                        </button>
+                      ))}
                     </div>
-                    <button
-                      className="ghost-button"
-                      type="button"
-                      onClick={() => {
-                        selectReportFile(null);
-                      }}
-                    >
-                      清除
-                    </button>
                   </div>
-                ) : null}
-              </div>
-            </div>
+
+                  <div className="record-option-row">
+                    <label htmlFor="record-report-concurrency">Codex 并发</label>
+                    <div className="record-concurrency-control">
+                      <input
+                        id="record-report-concurrency"
+                        type="range"
+                        min={RECORD_REPORT_CONCURRENCY_MIN}
+                        max={RECORD_REPORT_CONCURRENCY_MAX}
+                        value={recordReportConcurrency}
+                        onChange={(event) => {
+                          updateRecordReportConcurrency(Number(event.target.value));
+                        }}
+                      />
+                      <input
+                        aria-label="Codex 并发数"
+                        className="record-concurrency-input"
+                        type="number"
+                        min={RECORD_REPORT_CONCURRENCY_MIN}
+                        max={RECORD_REPORT_CONCURRENCY_MAX}
+                        value={recordReportConcurrency}
+                        onChange={(event) => {
+                          updateRecordReportConcurrency(Number(event.target.value));
+                        }}
+                      />
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+            </>
           )}
 
           <button className="primary-button" type="button" disabled={!canRun || loading} onClick={handleRun}>
@@ -531,6 +653,11 @@ export function ReportSelfCheckPage() {
                 PTR：{result.ptr_file_name ?? task?.ptr_file_name ?? '未返回文件名'}；报告：
                 {result.report_file_name ?? task?.report_file_name ?? result.file_name}
               </p>
+            ) : mode === 'record-report' ? (
+              <p>
+                原始记录：{result.record_file_name ?? task?.record_file_name ?? '未返回文件名'}；报告：
+                {result.report_file_name ?? task?.report_file_name ?? result.file_name}
+              </p>
             ) : (
               <p>报告：{result.file_name}</p>
             )}
@@ -540,7 +667,7 @@ export function ReportSelfCheckPage() {
           {priorityChecks.length > 0 ? (
             <section className="priority-strip">
               <h2>优先处理</h2>
-              <p>{mode === 'self' ? '以下项目需要先复核或修正，再查看通过项。' : '以下 PTR 与报告差异需要先复核或修正，再查看通过项。'}</p>
+              <p>{copy.priorityDescription}</p>
               <div>
                 {priorityChecks.map((check) => (
                   <a href={`#check-${check.check_id}`} key={check.check_id}>
@@ -560,7 +687,7 @@ export function ReportSelfCheckPage() {
               />
               <ResultGroup
                 title="需要人工复核"
-                description={mode === 'self' ? '这些项目证据不足或存在不确定性。' : '这些项目在 PTR 与报告对照中证据不足或存在不确定性。'}
+                description={copy.warningDescription}
                 checks={grouped.warning}
               />
               <ResultGroup title="已通过" description={copy.passDescription} checks={grouped.pass} />

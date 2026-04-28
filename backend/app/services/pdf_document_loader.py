@@ -30,6 +30,7 @@ class PDFDocumentLoader:
                     "width": rect.width,
                     "height": rect.height,
                     "layout_words": _extract_layout_words(page),
+                    "drawings": _extract_drawings(page),
                 }
                 should_render_page = _is_photo_page_text(text) or (render_textless_pages and not text.strip())
                 if render_dir is not None and should_render_page:
@@ -72,6 +73,86 @@ def _extract_layout_words(page: fitz.Page) -> list[dict[str, Any]]:
             }
         )
     return words
+
+
+def _extract_drawings(page: fitz.Page) -> list[dict[str, Any]]:
+    drawings = []
+    for drawing in page.get_drawings():
+        rect = _rect_to_dict(drawing.get("rect"))
+        if rect is None:
+            continue
+
+        drawings.append(
+            {
+                "rect": rect,
+                "width": _float_or_none(drawing.get("width")),
+                "fill": _color_to_list(drawing.get("fill")),
+                "color": _color_to_list(drawing.get("color")),
+                "ops": _drawing_ops(drawing.get("items", [])),
+            }
+        )
+    return drawings
+
+
+def _rect_to_dict(rect: Any) -> dict[str, float] | None:
+    try:
+        x0 = float(rect.x0)
+        y0 = float(rect.y0)
+        x1 = float(rect.x1)
+        y1 = float(rect.y1)
+    except AttributeError:
+        if isinstance(rect, dict):
+            try:
+                x0 = float(rect["x0"])
+                y0 = float(rect["y0"])
+                x1 = float(rect["x1"])
+                y1 = float(rect["y1"])
+            except (KeyError, TypeError, ValueError):
+                return None
+        elif isinstance(rect, (list, tuple)) and len(rect) >= 4:
+            try:
+                x0 = float(rect[0])
+                y0 = float(rect[1])
+                x1 = float(rect[2])
+                y1 = float(rect[3])
+            except (TypeError, ValueError):
+                return None
+        else:
+            return None
+
+    if x1 < x0:
+        x0, x1 = x1, x0
+    if y1 < y0:
+        y0, y1 = y1, y0
+    return {"x0": round(x0, 1), "y0": round(y0, 1), "x1": round(x1, 1), "y1": round(y1, 1)}
+
+
+def _float_or_none(value: Any) -> float | None:
+    try:
+        return round(float(value), 2)
+    except (TypeError, ValueError):
+        return None
+
+
+def _color_to_list(value: Any) -> list[float] | None:
+    if value is None:
+        return None
+    if not isinstance(value, (list, tuple)):
+        return None
+    try:
+        return [round(float(item), 4) for item in value]
+    except (TypeError, ValueError):
+        return None
+
+
+def _drawing_ops(items: Any) -> list[str]:
+    ops = []
+    if not isinstance(items, list):
+        return ops
+    for item in items:
+        if isinstance(item, (list, tuple)) and item:
+            ops.append(str(item[0]))
+    return ops
 
 
 def _is_photo_page_text(text: str) -> bool:

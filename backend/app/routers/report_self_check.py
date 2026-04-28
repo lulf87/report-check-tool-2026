@@ -4,12 +4,13 @@ from tempfile import NamedTemporaryFile, mkdtemp
 from threading import Lock
 from uuid import uuid4
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Form, HTTPException, UploadFile
 
 from app.config import settings
 from app.models.report_self_check import CheckResult
 from app.services.pdf_document_loader import PDFDocumentLoader
 from app.services.ptr_report_check_service import PtrReportCheckService
+from app.services.record_report_check_service import RecordReportCheckService, normalize_record_report_options
 from app.services.report_evidence_builder import APPROVED_CHECK_IDS
 from app.services.report_self_check_service import ReportSelfCheckService
 
@@ -92,6 +93,75 @@ async def start_check_ptr_report(ptr_file: UploadFile, report_file: UploadFile, 
     return _get_task(task_id)
 
 
+@router.post("/record-report/check")
+async def check_record_report(
+    record_file: UploadFile,
+    report_file: UploadFile,
+    record_report_mode: str = Form("quick"),
+    record_report_concurrency: int = Form(4),
+):
+    extracted_record, extracted_report = await _load_record_report_pdf_pair(record_file, report_file)
+    normalized_mode, normalized_concurrency = normalize_record_report_options(
+        record_report_mode,
+        record_report_concurrency,
+    )
+    try:
+        result = RecordReportCheckService().check_extracted_pair(
+            extracted_record,
+            extracted_report,
+            record_report_mode=normalized_mode,
+            record_report_concurrency=normalized_concurrency,
+        )
+        return result.model_dump(mode="json")
+    finally:
+        _cleanup_extracted_report(extracted_record)
+        _cleanup_extracted_report(extracted_report)
+
+
+@router.post("/record-report/check/start")
+async def start_check_record_report(
+    record_file: UploadFile,
+    report_file: UploadFile,
+    background_tasks: BackgroundTasks,
+    record_report_mode: str = Form("quick"),
+    record_report_concurrency: int = Form(4),
+):
+    extracted_record, extracted_report = await _load_record_report_pdf_pair(record_file, report_file)
+    normalized_mode, normalized_concurrency = normalize_record_report_options(
+        record_report_mode,
+        record_report_concurrency,
+    )
+    task_id = str(uuid4())
+    _set_task(
+        task_id,
+        {
+            "task_id": task_id,
+            "file_name": extracted_report["file_name"],
+            "record_file_name": extracted_record["file_name"],
+            "report_file_name": extracted_report["file_name"],
+            "record_report_mode": normalized_mode,
+            "record_report_concurrency": normalized_concurrency,
+            "status": "running",
+            "current_check_id": None,
+            "current_check_name": "等待开始",
+            "completed_checks": 0,
+            "total_checks": 0,
+            "logs": [f"record-report 核对任务已创建，模式={normalized_mode}，并发={normalized_concurrency}。"],
+            "result": None,
+            "error": None,
+        },
+    )
+    background_tasks.add_task(
+        _run_record_report_check_task,
+        task_id,
+        extracted_record,
+        extracted_report,
+        normalized_mode,
+        normalized_concurrency,
+    )
+    return _get_task(task_id)
+
+
 @router.get("/tasks/{task_id}")
 def get_check_task(task_id: str):
     task = _get_task(task_id)
@@ -132,6 +202,21 @@ async def _load_uploaded_pdf_pair(ptr_file: UploadFile, report_file: UploadFile)
     except Exception:
         if extracted_ptr is not None:
             _cleanup_extracted_report(extracted_ptr)
+        if extracted_report is not None:
+            _cleanup_extracted_report(extracted_report)
+        raise
+
+
+async def _load_record_report_pdf_pair(record_file: UploadFile, report_file: UploadFile) -> tuple[dict, dict]:
+    extracted_record = None
+    extracted_report = None
+    try:
+        extracted_record = await _load_uploaded_pdf_with_options(record_file, render_textless_pages=False)
+        extracted_report = await _load_uploaded_pdf_with_options(report_file, render_textless_pages=False)
+        return extracted_record, extracted_report
+    except Exception:
+        if extracted_record is not None:
+            _cleanup_extracted_report(extracted_record)
         if extracted_report is not None:
             _cleanup_extracted_report(extracted_report)
         raise
@@ -270,6 +355,74 @@ def _run_ptr_report_check_task(task_id: str, extracted_ptr: dict, extracted_repo
         logs=[f"PTR-report 全部 {len(result.check_results)} 项核对已完成。"],
     )
     _cleanup_extracted_report(extracted_ptr)
+    _cleanup_extracted_report(extracted_report)
+
+
+def _run_record_report_check_task(
+    task_id: str,
+    extracted_record: dict,
+    extracted_report: dict,
+    record_report_mode: str = "quick",
+    record_report_concurrency: int = 4,
+) -> None:
+    def update_progress(event: dict) -> None:
+        package = event["package"]
+        check_id = str(package["check_id"])
+        check_name = str(package["check_name"])
+        if event["event"] == "start":
+            _update_task(
+                task_id,
+                status="running",
+                total_checks=event["total"],
+                current_check_id=check_id,
+                current_check_name=check_name,
+                logs=[f"[{event['index']:02d}/{event['total']}] 开始 record-report {check_id} {check_name}"],
+            )
+            return
+
+        result: CheckResult = event["result"]
+        completed_checks = int(event.get("completed") or event["index"])
+        cache_text = "，cache=hit" if event.get("cached") else ""
+        _update_task(
+            task_id,
+            total_checks=event["total"],
+            completed_checks=completed_checks,
+            current_check_id=check_id,
+            current_check_name=check_name,
+            logs=[
+                (
+                    f"[{event['index']:02d}/{event['total']}] 完成 record-report {check_id} {check_name}："
+                    f"{result.status}，findings={len(result.findings)}，missing={len(result.missing_evidence)}{cache_text}"
+                )
+            ],
+        )
+
+    try:
+        result = RecordReportCheckService().check_extracted_pair(
+            extracted_record,
+            extracted_report,
+            task_id=task_id,
+            progress_callback=update_progress,
+            record_report_mode=record_report_mode,
+            record_report_concurrency=record_report_concurrency,
+        )
+    except Exception as exc:
+        _update_task(task_id, status="error", error=str(exc), logs=[f"record-report 核对任务失败：{exc}"])
+        _cleanup_extracted_report(extracted_record)
+        _cleanup_extracted_report(extracted_report)
+        return
+
+    _update_task(
+        task_id,
+        status="completed",
+        total_checks=len(result.check_results),
+        completed_checks=len(result.check_results),
+        current_check_id=None,
+        current_check_name="已完成",
+        result=result.model_dump(mode="json"),
+        logs=[f"record-report 全部 {len(result.check_results)} 项核对已完成。"],
+    )
+    _cleanup_extracted_report(extracted_record)
     _cleanup_extracted_report(extracted_report)
 
 

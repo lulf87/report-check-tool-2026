@@ -114,6 +114,12 @@ class CodexJudgeClient:
                 "本轮只判断 report 检验项目表中的标准要求是否完整、一致地摘录 PTR 第 2 章中首页声明范围内的要求。"
             )
             image_description = "如果本轮附加了图片，你必须把附加图片作为原 PTR 扫描页证据一起审阅。"
+        elif check_id.startswith("RECORD-REPORT-"):
+            role_description = (
+                "你是医疗器械原始记录与检验报告判定一致性的判断器。"
+                "本轮只判断一个 report 序号的 GB 9706.1-2020 单项结论是否与原始记录对应条款小项的勾选判定一致。"
+            )
+            image_description = "如果本轮附加了图片，你必须把附加图片作为原始记录或报告 PDF 页面证据一起审阅。"
         else:
             role_description = "你是医疗器械检验报告内部核对的判断器。"
             image_description = "如果本轮附加了图片，你必须把附加图片作为原 PDF 照片页证据一起审阅。"

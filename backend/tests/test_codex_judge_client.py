@@ -89,6 +89,22 @@ def test_prompt_uses_ptr_report_role_for_ptr_packages():
     assert "报告内部核对" not in prompt.split("。", maxsplit=1)[0]
 
 
+def test_prompt_uses_record_report_role_for_record_report_packages():
+    prompt = CodexJudgeClient(transport=StaticJudgeTransport("{}"))._build_prompt(
+        {
+            "check_id": "RECORD-REPORT-GB9706-1-001",
+            "check_name": "序号 1 / 条款 4.2 原始记录核对",
+            "required_details": ["record_entries", "report_judgement"],
+            "check_rules": ["只判断一个 report 序号"],
+            "evidence": {},
+        }
+    )
+
+    assert "原始记录与检验报告判定一致性" in prompt
+    assert "一个 report 序号" in prompt
+    assert "报告内部核对" not in prompt.split("。", maxsplit=1)[0]
+
+
 def test_codex_cli_command_uses_supported_read_only_last_message_flags(monkeypatch):
     monkeypatch.setattr(settings, "codex_model", "gpt-test")
     monkeypatch.setattr(settings, "codex_reasoning_effort", "low")

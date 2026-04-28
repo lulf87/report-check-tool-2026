@@ -1,6 +1,6 @@
 import type { CheckResult, Finding, ReportSelfCheckResult } from '../types/reportSelfCheck';
 
-export type ReportExportMode = 'self' | 'ptr-report';
+export type ReportExportMode = 'self' | 'ptr-report' | 'record-report';
 
 const STATUS_LABELS: Record<string, string> = {
   pass: '通过',
@@ -89,12 +89,12 @@ const PREFERRED_DETAIL_COLUMNS = [
 ];
 
 export function buildReportExportTitle(result: ReportSelfCheckResult, mode: ReportExportMode) {
-  const prefix = mode === 'ptr-report' ? 'PTR与报告核对' : '报告自身核对';
+  const prefix = mode === 'ptr-report' ? 'PTR与报告核对' : mode === 'record-report' ? '原始记录与报告核对' : '报告自身核对';
   return `${prefix}-${sanitizeFileName(result.report_file_name ?? result.file_name ?? 'result')}`;
 }
 
 export function buildReportExportHtml(result: ReportSelfCheckResult, mode: ReportExportMode) {
-  const title = mode === 'ptr-report' ? 'PTR 与报告核对结果' : '报告自身核对结果';
+  const title = mode === 'ptr-report' ? 'PTR 与报告核对结果' : mode === 'record-report' ? '原始记录与报告核对结果' : '报告自身核对结果';
   const generatedAt = new Date().toLocaleString('zh-CN');
   const htmlTitle = escapeHtml(buildReportExportTitle(result, mode));
 
@@ -177,7 +177,18 @@ function coverSection(result: ReportSelfCheckResult, mode: ReportExportMode, tit
           ['PTR 文件', result.ptr_file_name ?? '未返回文件名'],
           ['报告文件', result.report_file_name ?? result.file_name],
         ]
+      : mode === 'record-report'
+        ? [
+            ['原始记录文件', result.record_file_name ?? '未返回文件名'],
+            ['报告文件', result.report_file_name ?? result.file_name],
+          ]
       : [['报告文件', result.file_name]];
+  const coverNote =
+    mode === 'ptr-report'
+      ? '本报告为系统辅助核对结果，用于快速定位 PTR 与检验报告之间的摘录差异、缺漏条款和需人工确认事项。'
+      : mode === 'record-report'
+        ? '本报告为系统辅助核对结果，用于快速定位原始记录与检验报告之间的差异、缺漏和需人工确认事项。'
+        : '本报告为系统辅助核对结果，用于快速定位检验报告内部一致性问题和需人工确认事项。';
   const metaRows = [
     ['报告编号', result.report_meta.report_number],
     ['样品编号', result.report_meta.sample_number],
@@ -194,7 +205,7 @@ function coverSection(result: ReportSelfCheckResult, mode: ReportExportMode, tit
       </div>
       <span class="status-badge status-${statusClass(result.overall_status)}">${escapeHtml(statusLabel(result.overall_status))}</span>
     </div>
-    <p class="cover-note">本报告为系统辅助核对结果，用于快速定位 PTR 与检验报告之间的摘录差异、缺漏条款和需人工确认事项。</p>
+    <p class="cover-note">${escapeHtml(coverNote)}</p>
     <table class="meta-table">
       <tbody>
         ${[...fileRows, ...metaRows].map(([label, value]) => infoRow(label, value)).join('')}

@@ -186,6 +186,74 @@ a {
   gap: 14px;
 }
 
+.record-report-options {
+  display: grid;
+  gap: 12px;
+  margin: 2px 0 18px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.68);
+}
+
+.record-option-row {
+  display: grid;
+  gap: 8px;
+}
+
+.record-option-row > span,
+.record-option-row > label {
+  color: var(--ink);
+  font-weight: 800;
+}
+
+.record-mode-switch {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(245, 239, 225, 0.8);
+}
+
+.record-mode-switch button {
+  min-height: 38px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.record-mode-switch button.active {
+  color: #14395d;
+  background: var(--accent-soft);
+}
+
+.record-concurrency-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 72px;
+  gap: 10px;
+  align-items: center;
+}
+
+.record-concurrency-control input[type='range'] {
+  width: 100%;
+}
+
+.record-concurrency-input {
+  min-width: 0;
+  min-height: 38px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: white;
+  color: var(--ink);
+  font: inherit;
+  font-weight: 800;
+  text-align: center;
+}
+
 .file-drop {
   display: grid;
   gap: 8px;
@@ -709,6 +777,111 @@ dd {
   color: var(--error);
 }
 
+.record-report-panel {
+  display: grid;
+  gap: 12px;
+  margin-top: 18px;
+  padding: 14px;
+  border: 1px solid #e7dac4;
+  border-radius: 8px;
+  background: #fffdf7;
+}
+
+.record-report-panel > header,
+.record-entry-list article header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.record-report-panel h4,
+.record-report-panel h5 {
+  margin: 0;
+}
+
+.record-report-panel p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.judgement-pair {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.judgement-pair span,
+.record-entry-list article header span {
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: #efe7d7;
+  color: #4e4537;
+  font-size: 0.86rem;
+  font-weight: 800;
+}
+
+.record-report-panel details {
+  display: grid;
+  gap: 12px;
+}
+
+.record-report-panel summary {
+  cursor: pointer;
+  color: var(--accent);
+  font-weight: 800;
+}
+
+.record-report-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.record-report-columns pre,
+.record-entry-list pre {
+  margin: 0;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  border-radius: 8px;
+  padding: 12px;
+  background: #f7f1e5;
+  color: #1e2a22;
+  font-family: inherit;
+  line-height: 1.7;
+}
+
+.record-report-columns > section {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-width: 0;
+}
+
+.record-entry-list {
+  display: grid;
+  gap: 10px;
+  max-height: 520px;
+  overflow: auto;
+}
+
+.record-entry-list article {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid #e7dac4;
+  border-radius: 8px;
+  background: #fffaf0;
+}
+
+.record-entry-list article p {
+  margin: 0;
+}
+
 .card-section {
   margin-top: 18px;
 }
@@ -921,7 +1094,15 @@ dd {
     grid-template-columns: 1fr;
   }
 
+  .record-report-columns {
+    grid-template-columns: 1fr;
+  }
+
   .mode-switch {
+    grid-template-columns: 1fr;
+  }
+
+  .record-concurrency-control {
     grid-template-columns: 1fr;
   }
 }

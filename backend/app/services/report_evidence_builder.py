@@ -198,6 +198,7 @@ def _normalize_text(text: str) -> str:
 def _public_page_snapshot(page: dict[str, Any]) -> dict[str, Any]:
     snapshot = copy.deepcopy(page)
     snapshot.pop("layout_words", None)
+    snapshot.pop("drawings", None)
     return snapshot
 
 

@@ -1,7 +1,6 @@
-import type { ReportSelfCheckResult, ReportSelfCheckTask } from '../types/reportSelfCheck';
+import type { RecordReportCheckOptions, ReportSelfCheckResult, ReportSelfCheckTask } from '../types/reportSelfCheck';
 
-async function readErrorMessage(response: Response): Promise<string> {
-  const fallback = '报告自身核对失败';
+async function readErrorMessage(response: Response, fallback = '报告自身核对失败'): Promise<string> {
   const contentType = response.headers.get('content-type') ?? '';
 
   if (contentType.includes('application/json')) {
@@ -65,7 +64,30 @@ export async function startPtrReportCheck(ptrFile: File, reportFile: File): Prom
   });
 
   if (!response.ok) {
-    throw new Error(await readErrorMessage(response));
+    throw new Error(await readErrorMessage(response, 'PTR 与报告核对失败'));
+  }
+
+  return response.json() as Promise<ReportSelfCheckTask>;
+}
+
+export async function startRecordReportCheck(
+  recordFile: File,
+  reportFile: File,
+  options: RecordReportCheckOptions = { record_report_mode: 'quick', record_report_concurrency: 4 },
+): Promise<ReportSelfCheckTask> {
+  const formData = new FormData();
+  formData.append('record_file', recordFile);
+  formData.append('report_file', reportFile);
+  formData.append('record_report_mode', options.record_report_mode);
+  formData.append('record_report_concurrency', String(options.record_report_concurrency));
+
+  const response = await fetch('/api/report-self-check/record-report/check/start', {
+    method: 'POST',
+    body: formData,
+  });
+
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, '原始记录与报告核对失败'));
   }
 
   return response.json() as Promise<ReportSelfCheckTask>;

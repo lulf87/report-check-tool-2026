@@ -1,5 +1,11 @@
 export type CheckStatus = 'pass' | 'warning' | 'error';
 export type Confidence = 'high' | 'medium' | 'low';
+export type RecordReportCheckMode = 'quick' | 'full_codex';
+
+export interface RecordReportCheckOptions {
+  record_report_mode: RecordReportCheckMode;
+  record_report_concurrency: number;
+}
 
 export interface Finding {
   severity: 'warning' | 'error';
@@ -27,9 +33,13 @@ export interface ReportSelfCheckResult {
   task_id: string;
   file_name: string;
   ptr_file_name?: string;
+  record_file_name?: string;
   report_file_name?: string;
+  record_report_mode?: RecordReportCheckMode;
+  record_report_concurrency?: number;
   homepage_scope?: Record<string, unknown> | null;
   ptr_report_scope_summary?: Record<string, unknown> | null;
+  record_report_summary?: Record<string, unknown> | null;
   overall_status: CheckStatus;
   report_meta: {
     report_number: string;
@@ -52,9 +62,13 @@ export interface ReportSelfCheckTask {
   task_id: string;
   file_name: string;
   ptr_file_name?: string;
+  record_file_name?: string;
   report_file_name?: string;
+  record_report_mode?: RecordReportCheckMode;
+  record_report_concurrency?: number;
   homepage_scope?: Record<string, unknown> | null;
   ptr_report_scope_summary?: Record<string, unknown> | null;
+  record_report_summary?: Record<string, unknown> | null;
   status: 'running' | 'completed' | 'error';
   current_check_id: string | null;
   current_check_name: string;

@@ -93,6 +93,65 @@ function PtrClauseComparisonList({ check }: { check: CheckResult }) {
   );
 }
 
+function RecordReportComparisonPanel({ check }: { check: CheckResult }) {
+  const entries = recordsFrom(check.details.record_entries);
+  const sequence = readableText(check.details.sequence, '');
+  const clause = readableText(check.details.report_standard_clause, '');
+  const reportPage = readableText(check.details.report_page, '');
+  const recordJudgement = readableText(check.details.record_aggregate_judgement, '缺失');
+  const reportJudgement = readableText(check.details.report_judgement, '缺失');
+  const reportRequirement = textFrom(check.details.report_standard_requirement, '未提取到报告标准要求');
+
+  return (
+    <section className="record-report-panel">
+      <header>
+        <div>
+          <h4>序号级核对明细</h4>
+          <p>
+            序号 {sequence || '-'}；条款 {clause || '-'}
+            {reportPage ? `；报告第 ${reportPage} 页` : ''}
+          </p>
+        </div>
+        <div className="judgement-pair">
+          <span>报告：{reportJudgement}</span>
+          <span>原始记录：{recordJudgement}</span>
+        </div>
+      </header>
+
+      <details open={check.status !== 'pass'}>
+        <summary>查看报告要求和匹配到的原始记录小项（{entries.length} 项）</summary>
+        <div className="record-report-columns">
+          <section>
+            <h5>报告标准要求</h5>
+            <pre>{reportRequirement}</pre>
+          </section>
+          <section>
+            <h5>原始记录小项</h5>
+            {entries.length > 0 ? (
+              <div className="record-entry-list">
+                {entries.map((entry, index) => (
+                  <article key={`${entry.page}-${entry.record_sequence}-${index}`}>
+                    <header>
+                      <strong>
+                        第 {readableText(entry.page, '-')} 页 / {readableText(entry.record_sequence, `小项 ${index + 1}`)}
+                      </strong>
+                      <span>{readableText(entry.judgement, '缺失')}</span>
+                    </header>
+                    <p>条款：{Array.isArray(entry.clauses) ? entry.clauses.join('、') : readableText(entry.clauses, '-')}</p>
+                    <pre>{textFrom(entry.requirement_text, '未提取到原始记录要求文本')}</pre>
+                  </article>
+                ))}
+              </div>
+            ) : (
+              <p className="empty-inline">未匹配到原始记录小项。</p>
+            )}
+          </section>
+        </div>
+      </details>
+    </section>
+  );
+}
+
 function renderMissingEvidenceCard(item: Record<string, unknown>, index: number) {
   const rawReason = String(item.reason ?? item.detail ?? item.value ?? '');
   const title = readableTitle(item, index);
@@ -120,6 +179,7 @@ export function CheckResultCard({ check }: { check: CheckResult }) {
   const status = formatStatus(check.status);
   const systemDiagnosticOnly = hasOnlyCodexDiagnostics(check);
   const isPtrClauseCheck = check.check_id.startsWith('PTR-') && check.check_id !== 'PTR-SCOPE-COVERAGE';
+  const isRecordReportCheck = check.check_id.startsWith('RECORD-REPORT-GB9706-1-');
 
   return (
     <article className={`check-card ${status.tone}`} id={`check-${check.check_id}`}>
@@ -144,8 +204,9 @@ export function CheckResultCard({ check }: { check: CheckResult }) {
       ) : null}
 
       {isPtrClauseCheck ? <PtrClauseComparisonList check={check} /> : null}
+      {isRecordReportCheck ? <RecordReportComparisonPanel check={check} /> : null}
 
-      {check.findings.length > 0 || !isPtrClauseCheck ? (
+      {check.findings.length > 0 || (!isPtrClauseCheck && !isRecordReportCheck) ? (
         <section className="card-section">
           <h4>问题与风险</h4>
           <FindingsList findings={check.findings} />
