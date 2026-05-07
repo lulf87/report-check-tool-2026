@@ -115,9 +115,35 @@ class CodexJudgeClient:
             )
             image_description = "如果本轮附加了图片，你必须把附加图片作为原 PTR 扫描页证据一起审阅。"
         elif check_id.startswith("RECORD-REPORT-"):
+            evidence = evidence_package.get("evidence") if isinstance(evidence_package.get("evidence"), dict) else {}
+            standard = str(evidence.get("record_report_standard") or "")
+            standard_text = "GB 9706.202-2021" if standard == "gb9706_202" else "GB 9706.1-2020"
+            source_text = (
+                "原始记录判定可能来自实测数据、备注、手写符号或程序抽取的符号判断。"
+                if standard == "gb9706_202"
+                else "原始记录判定来自对应条款小项的勾选判定。"
+            )
+            deterministic_guidance = (
+                "判定优先级：必须先看 evidence.deterministic_issues、evidence.report_judgement "
+                "和 evidence.record_aggregate_judgement。"
+                "如果 deterministic_issues 为空，且 report_judgement 与 record_aggregate_judgement 一致，"
+                "必须输出 pass，findings 和 missing_evidence 必须为空；"
+                "不得仅因兜底映射、OCR 条款号差异、父条款覆盖分支条款或未逐字列出每个分支条款而输出 warning。"
+                "如果 deterministic_issues 包含 mismatch，必须输出 error。"
+                "如果 deterministic_issues 包含 record_evidence_missing、record_judgement_missing、"
+                "report_judgement_missing 或其他缺失/不确定项，才输出 warning。"
+            )
+            if standard == "gb9706_202":
+                deterministic_guidance += (
+                    "对 GB 9706.202-2021，mapping_method 为 parent_clause_sequence 或 sequence_fallback "
+                    "是程序允许的映射方式；只要双方聚合判定一致且 deterministic_issues 为空，"
+                    "这些映射方式本身不是风险。报告标准条款为 201.x.x 父条款时，"
+                    "可按对应原始记录序号下的所有分支条款整体核对，不要求每个 OCR 分支条款完全同号。"
+                )
             role_description = (
                 "你是医疗器械原始记录与检验报告判定一致性的判断器。"
-                "本轮只判断一个 report 序号的 GB 9706.1-2020 单项结论是否与原始记录对应条款小项的勾选判定一致。"
+                f"本轮只判断一个 report 序号的 {standard_text} 单项结论是否与原始记录对应条款小项一致。"
+                f"{source_text}{deterministic_guidance}"
             )
             image_description = "如果本轮附加了图片，你必须把附加图片作为原始记录或报告 PDF 页面证据一起审阅。"
         else:

@@ -35,6 +35,17 @@ function textFrom(value: unknown, fallback = '未提取到内容') {
   return text || fallback;
 }
 
+function recordReportStandardLabel(value: unknown) {
+  return value === 'gb9706_202' ? 'GB 9706.202-2021' : 'GB 9706.1-2020';
+}
+
+function mappingMethodLabel(value: unknown) {
+  if (value === 'parent_clause_sequence') return '父条款分支顺序匹配';
+  if (value === 'sequence_fallback') return '序号顺序兜底';
+  if (value === 'clause') return '条款号匹配';
+  return '';
+}
+
 function findLeafComparison(check: CheckResult, prefix: string) {
   return recordsFrom(check.details.leaf_clause_comparisons).find((item) => String(item.prefix ?? item.ptr_clause_prefix ?? '') === prefix);
 }
@@ -101,6 +112,8 @@ function RecordReportComparisonPanel({ check }: { check: CheckResult }) {
   const recordJudgement = readableText(check.details.record_aggregate_judgement, '缺失');
   const reportJudgement = readableText(check.details.report_judgement, '缺失');
   const reportRequirement = textFrom(check.details.report_standard_requirement, '未提取到报告标准要求');
+  const standardLabel = recordReportStandardLabel(check.details.record_report_standard);
+  const mappingLabel = mappingMethodLabel(check.details.mapping_method);
 
   return (
     <section className="record-report-panel">
@@ -108,8 +121,9 @@ function RecordReportComparisonPanel({ check }: { check: CheckResult }) {
         <div>
           <h4>序号级核对明细</h4>
           <p>
-            序号 {sequence || '-'}；条款 {clause || '-'}
+            {standardLabel}；序号 {sequence || '-'}；条款 {clause || '-'}
             {reportPage ? `；报告第 ${reportPage} 页` : ''}
+            {mappingLabel ? `；${mappingLabel}` : ''}
           </p>
         </div>
         <div className="judgement-pair">
@@ -138,6 +152,10 @@ function RecordReportComparisonPanel({ check }: { check: CheckResult }) {
                       <span>{readableText(entry.judgement, '缺失')}</span>
                     </header>
                     <p>条款：{Array.isArray(entry.clauses) ? entry.clauses.join('、') : readableText(entry.clauses, '-')}</p>
+                    {readableText(entry.inspection_item, '') ? <p>检验项目：{readableText(entry.inspection_item, '')}</p> : null}
+                    {readableText(entry.measured_data, '') ? <p>实测数据：{readableText(entry.measured_data, '')}</p> : null}
+                    {readableText(entry.remark, '') ? <p>备注：{readableText(entry.remark, '')}</p> : null}
+                    {readableText(entry.symbol_judgement, '') ? <p>原始记录符号判断：{readableText(entry.symbol_judgement, '')}</p> : null}
                     <pre>{textFrom(entry.requirement_text, '未提取到原始记录要求文本')}</pre>
                   </article>
                 ))}
@@ -179,7 +197,7 @@ export function CheckResultCard({ check }: { check: CheckResult }) {
   const status = formatStatus(check.status);
   const systemDiagnosticOnly = hasOnlyCodexDiagnostics(check);
   const isPtrClauseCheck = check.check_id.startsWith('PTR-') && check.check_id !== 'PTR-SCOPE-COVERAGE';
-  const isRecordReportCheck = check.check_id.startsWith('RECORD-REPORT-GB9706-1-');
+  const isRecordReportCheck = check.check_id.startsWith('RECORD-REPORT-');
 
   return (
     <article className={`check-card ${status.tone}`} id={`check-${check.check_id}`}>

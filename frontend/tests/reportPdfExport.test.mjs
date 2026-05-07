@@ -222,6 +222,59 @@ test('buildReportExportHtml separates system diagnostics from report content fin
 test('buildReportExportTitle creates filesystem-friendly names for both modes', () => {
   assert.equal(buildReportExportTitle(baseResult(), 'self'), '报告自身核对-report.pdf');
   assert.equal(buildReportExportTitle(baseResult(), 'ptr-report'), 'PTR与报告核对-report.pdf');
+  assert.equal(
+    buildReportExportTitle({ ...baseResult(), record_report_standard: 'gb9706_202' }, 'record-report'),
+    '原始记录与报告核对-GB 9706.202-2021-report.pdf',
+  );
+});
+
+test('buildReportExportHtml includes record-report standard and GB 9706.202 detail fields', () => {
+  const result = {
+    ...baseResult(),
+    record_file_name: 'record.pdf',
+    report_file_name: 'report.pdf',
+    record_report_standard: 'gb9706_202',
+    check_results: [
+      {
+        check_id: 'RECORD-REPORT-GB9706-202-119',
+        check_name: '序号 119 / 条款 201.4.2.3.101 原始记录核对',
+        status: 'warning',
+        confidence: 'high',
+        summary: '需人工复核。',
+        details: {
+          record_report_standard: 'gb9706_202',
+          mapping_method: 'sequence_fallback',
+          sequence: 119,
+          report_standard_clause: '201.4.2.3.101',
+          report_judgement: '不适用',
+          record_aggregate_judgement: '缺失',
+          record_entries: [
+            {
+              record_sequence: 1,
+              clauses: ['201.4.2.3.101'],
+              measured_data: '△',
+              remark: '见风险管理文件',
+              symbol_judgement: 'drawing_delta_mark',
+            },
+          ],
+        },
+        findings: [],
+        evidence: [],
+        missing_evidence: [],
+      },
+    ],
+  };
+
+  const html = buildReportExportHtml(result, 'record-report');
+
+  assert.match(html, /原始记录与报告核对结果/);
+  assert.match(html, /核对标准/);
+  assert.match(html, /GB 9706\.202-2021/);
+  assert.match(html, /映射方式/);
+  assert.match(html, /序号顺序兜底/);
+  assert.match(html, /实测数据/);
+  assert.match(html, /原始记录符号判断/);
+  assert.doesNotMatch(html, /record_report_standard/);
 });
 
 test('printReportResultAsPdf prints through a hidden iframe without opening a popup window', () => {

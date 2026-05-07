@@ -10,7 +10,11 @@ from app.config import settings
 from app.models.report_self_check import CheckResult
 from app.services.pdf_document_loader import PDFDocumentLoader
 from app.services.ptr_report_check_service import PtrReportCheckService
-from app.services.record_report_check_service import RecordReportCheckService, normalize_record_report_options
+from app.services.record_report_check_service import (
+    RecordReportCheckService,
+    normalize_record_report_options,
+    normalize_record_report_standard,
+)
 from app.services.report_evidence_builder import APPROVED_CHECK_IDS
 from app.services.report_self_check_service import ReportSelfCheckService
 
@@ -99,18 +103,21 @@ async def check_record_report(
     report_file: UploadFile,
     record_report_mode: str = Form("quick"),
     record_report_concurrency: int = Form(4),
+    record_report_standard: str = Form("gb9706_1"),
 ):
     extracted_record, extracted_report = await _load_record_report_pdf_pair(record_file, report_file)
     normalized_mode, normalized_concurrency = normalize_record_report_options(
         record_report_mode,
         record_report_concurrency,
     )
+    normalized_standard = normalize_record_report_standard(record_report_standard)
     try:
         result = RecordReportCheckService().check_extracted_pair(
             extracted_record,
             extracted_report,
             record_report_mode=normalized_mode,
             record_report_concurrency=normalized_concurrency,
+            record_report_standard=normalized_standard,
         )
         return result.model_dump(mode="json")
     finally:
@@ -125,12 +132,14 @@ async def start_check_record_report(
     background_tasks: BackgroundTasks,
     record_report_mode: str = Form("quick"),
     record_report_concurrency: int = Form(4),
+    record_report_standard: str = Form("gb9706_1"),
 ):
     extracted_record, extracted_report = await _load_record_report_pdf_pair(record_file, report_file)
     normalized_mode, normalized_concurrency = normalize_record_report_options(
         record_report_mode,
         record_report_concurrency,
     )
+    normalized_standard = normalize_record_report_standard(record_report_standard)
     task_id = str(uuid4())
     _set_task(
         task_id,
@@ -139,6 +148,7 @@ async def start_check_record_report(
             "file_name": extracted_report["file_name"],
             "record_file_name": extracted_record["file_name"],
             "report_file_name": extracted_report["file_name"],
+            "record_report_standard": normalized_standard,
             "record_report_mode": normalized_mode,
             "record_report_concurrency": normalized_concurrency,
             "status": "running",
@@ -146,7 +156,12 @@ async def start_check_record_report(
             "current_check_name": "等待开始",
             "completed_checks": 0,
             "total_checks": 0,
-            "logs": [f"record-report 核对任务已创建，模式={normalized_mode}，并发={normalized_concurrency}。"],
+            "logs": [
+                (
+                    f"record-report 核对任务已创建，标准={normalized_standard}，"
+                    f"模式={normalized_mode}，并发={normalized_concurrency}。"
+                )
+            ],
             "result": None,
             "error": None,
         },
@@ -158,6 +173,7 @@ async def start_check_record_report(
         extracted_report,
         normalized_mode,
         normalized_concurrency,
+        normalized_standard,
     )
     return _get_task(task_id)
 
@@ -364,6 +380,7 @@ def _run_record_report_check_task(
     extracted_report: dict,
     record_report_mode: str = "quick",
     record_report_concurrency: int = 4,
+    record_report_standard: str = "gb9706_1",
 ) -> None:
     def update_progress(event: dict) -> None:
         package = event["package"]
@@ -405,6 +422,7 @@ def _run_record_report_check_task(
             progress_callback=update_progress,
             record_report_mode=record_report_mode,
             record_report_concurrency=record_report_concurrency,
+            record_report_standard=record_report_standard,
         )
     except Exception as exc:
         _update_task(task_id, status="error", error=str(exc), logs=[f"record-report 核对任务失败：{exc}"])
