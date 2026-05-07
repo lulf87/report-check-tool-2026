@@ -81,6 +81,8 @@ def _extract_drawings(page: fitz.Page) -> list[dict[str, Any]]:
         rect = _rect_to_dict(drawing.get("rect"))
         if rect is None:
             continue
+        items = drawing.get("items", [])
+        path_start, path_end = _drawing_path_endpoints(items)
 
         drawings.append(
             {
@@ -88,7 +90,9 @@ def _extract_drawings(page: fitz.Page) -> list[dict[str, Any]]:
                 "width": _float_or_none(drawing.get("width")),
                 "fill": _color_to_list(drawing.get("fill")),
                 "color": _color_to_list(drawing.get("color")),
-                "ops": _drawing_ops(drawing.get("items", [])),
+                "ops": _drawing_ops(items),
+                "path_start": path_start,
+                "path_end": path_end,
             }
         )
     return drawings
@@ -141,6 +145,32 @@ def _color_to_list(value: Any) -> list[float] | None:
         return None
     try:
         return [round(float(item), 4) for item in value]
+    except (TypeError, ValueError):
+        return None
+
+
+def _drawing_path_endpoints(items: Any) -> tuple[dict[str, float] | None, dict[str, float] | None]:
+    if not isinstance(items, list):
+        return None, None
+    start = None
+    end = None
+    for item in items:
+        if not isinstance(item, (list, tuple)):
+            continue
+        points = [_point_to_dict(part) for part in item[1:]]
+        points = [point for point in points if point is not None]
+        if points and start is None:
+            start = points[0]
+        if points:
+            end = points[-1]
+    return start, end
+
+
+def _point_to_dict(point: Any) -> dict[str, float] | None:
+    try:
+        return {"x": round(float(point.x), 1), "y": round(float(point.y), 1)}
+    except AttributeError:
+        return None
     except (TypeError, ValueError):
         return None
 

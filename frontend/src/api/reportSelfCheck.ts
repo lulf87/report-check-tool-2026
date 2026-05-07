@@ -73,11 +73,16 @@ export async function startPtrReportCheck(ptrFile: File, reportFile: File): Prom
 export async function startRecordReportCheck(
   recordFile: File,
   reportFile: File,
-  options: RecordReportCheckOptions = { record_report_mode: 'quick', record_report_concurrency: 4 },
+  options: RecordReportCheckOptions = {
+    record_report_standard: 'gb9706_1',
+    record_report_mode: 'quick',
+    record_report_concurrency: 4,
+  },
 ): Promise<ReportSelfCheckTask> {
   const formData = new FormData();
   formData.append('record_file', recordFile);
   formData.append('report_file', reportFile);
+  formData.append('record_report_standard', options.record_report_standard);
   formData.append('record_report_mode', options.record_report_mode);
   formData.append('record_report_concurrency', String(options.record_report_concurrency));
 

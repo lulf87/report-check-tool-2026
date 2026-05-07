@@ -1,8 +1,10 @@
 export type CheckStatus = 'pass' | 'warning' | 'error';
 export type Confidence = 'high' | 'medium' | 'low';
 export type RecordReportCheckMode = 'quick' | 'full_codex';
+export type RecordReportStandard = 'gb9706_1' | 'gb9706_202';
 
 export interface RecordReportCheckOptions {
+  record_report_standard: RecordReportStandard;
   record_report_mode: RecordReportCheckMode;
   record_report_concurrency: number;
 }
@@ -35,6 +37,7 @@ export interface ReportSelfCheckResult {
   ptr_file_name?: string;
   record_file_name?: string;
   report_file_name?: string;
+  record_report_standard?: RecordReportStandard;
   record_report_mode?: RecordReportCheckMode;
   record_report_concurrency?: number;
   homepage_scope?: Record<string, unknown> | null;
@@ -64,6 +67,7 @@ export interface ReportSelfCheckTask {
   ptr_file_name?: string;
   record_file_name?: string;
   report_file_name?: string;
+  record_report_standard?: RecordReportStandard;
   record_report_mode?: RecordReportCheckMode;
   record_report_concurrency?: number;
   homepage_scope?: Record<string, unknown> | null;

@@ -16,6 +16,7 @@ class FakeRecordReportCheckService:
         progress_callback=None,
         record_report_mode: str = "quick",
         record_report_concurrency: int = 4,
+        record_report_standard: str = "gb9706_1",
     ) -> RecordReportCheckResult:
         package = {
             "check_id": "RECORD-REPORT-GB9706-1",
@@ -33,6 +34,7 @@ class FakeRecordReportCheckService:
             details={
                 "record_file": extracted_record["file_name"],
                 "report_file": extracted_report["file_name"],
+                "record_report_standard": record_report_standard,
                 "record_report_mode": record_report_mode,
                 "record_report_concurrency": record_report_concurrency,
             },
@@ -54,6 +56,7 @@ class FakeRecordReportCheckService:
             file_name=extracted_report["file_name"],
             record_file_name=extracted_record["file_name"],
             report_file_name=extracted_report["file_name"],
+            record_report_standard=record_report_standard,
             record_report_mode=record_report_mode,
             record_report_concurrency=record_report_concurrency,
             record_report_summary={"matched_count": 1},
@@ -95,19 +98,25 @@ def test_record_report_check_uses_record_and_report_file_fields(monkeypatch):
             "record_file": ("record.pdf", b"record bytes", "application/pdf"),
             "report_file": ("report.pdf", b"report bytes", "application/pdf"),
         },
-        data={"record_report_mode": "full", "record_report_concurrency": "12"},
+        data={
+            "record_report_standard": "GB 9706.202-2021",
+            "record_report_mode": "full",
+            "record_report_concurrency": "12",
+        },
     )
 
     assert response.status_code == 200
     payload = response.json()
     assert payload["record_file_name"] == "record.pdf"
     assert payload["report_file_name"] == "report.pdf"
+    assert payload["record_report_standard"] == "gb9706_202"
     assert payload["record_report_mode"] == "full_codex"
     assert payload["record_report_concurrency"] == 8
     assert payload["summary"]["pass_count"] == 1
     assert payload["check_results"][0]["details"] == {
         "record_file": "record.pdf",
         "report_file": "report.pdf",
+        "record_report_standard": "gb9706_202",
         "record_report_mode": "full_codex",
         "record_report_concurrency": 8,
     }
@@ -130,11 +139,13 @@ def test_record_report_check_start_completes_task(monkeypatch):
     assert response.status_code == 200
     task = client.get(f"/api/report-self-check/tasks/{response.json()['task_id']}").json()
     assert task["status"] == "completed"
+    assert task["record_report_standard"] == "gb9706_1"
     assert task["record_report_mode"] == "full_codex"
     assert task["record_report_concurrency"] == 6
     assert task["completed_checks"] == 1
     assert task["total_checks"] == 1
     assert any("record-report" in log for log in task["logs"])
     assert task["result"]["record_file_name"] == "record.pdf"
+    assert task["result"]["record_report_standard"] == "gb9706_1"
     assert task["result"]["record_report_mode"] == "full_codex"
     assert task["result"]["record_report_concurrency"] == 6

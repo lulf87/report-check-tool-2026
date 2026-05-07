@@ -7,6 +7,7 @@ import { printReportResultAsPdf } from '../export/reportPdfExport';
 import type {
   CheckResult,
   RecordReportCheckMode,
+  RecordReportStandard,
   ReportSelfCheckResult,
   ReportSelfCheckTask,
 } from '../types/reportSelfCheck';
@@ -18,6 +19,10 @@ const RECORD_REPORT_CONCURRENCY_MAX = 8;
 const RECORD_REPORT_MODE_OPTIONS: Array<{ label: string; value: RecordReportCheckMode }> = [
   { label: '快速核对（推荐）', value: 'quick' },
   { label: '完整 Codex', value: 'full_codex' },
+];
+const RECORD_REPORT_STANDARD_OPTIONS: Array<{ label: string; value: RecordReportStandard }> = [
+  { label: 'GB 9706.1-2020', value: 'gb9706_1' },
+  { label: 'GB 9706.202-2021', value: 'gb9706_202' },
 ];
 
 const MODE_COPY: Record<
@@ -107,6 +112,10 @@ function getLastTaskKey(mode: CheckMode) {
   return `report-self-check:${mode}:last-task-id`;
 }
 
+function formatRecordReportStandard(value: unknown) {
+  return value === 'gb9706_202' ? 'GB 9706.202-2021' : 'GB 9706.1-2020';
+}
+
 function delay(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
@@ -163,6 +172,7 @@ export function ReportSelfCheckPage() {
   const [task, setTask] = useState<ReportSelfCheckTask | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [recordReportStandard, setRecordReportStandard] = useState<RecordReportStandard>('gb9706_1');
   const [recordReportMode, setRecordReportMode] = useState<RecordReportCheckMode>('quick');
   const [recordReportConcurrency, setRecordReportConcurrency] = useState(4);
   const requestTokenRef = useRef(0);
@@ -317,6 +327,7 @@ export function ReportSelfCheckPage() {
       } else {
         if (!recordFile || !reportFile) return;
         nextTask = await startRecordReportCheck(recordFile, reportFile, {
+          record_report_standard: recordReportStandard,
           record_report_mode: recordReportMode,
           record_report_concurrency: recordReportConcurrency,
         });
@@ -541,6 +552,26 @@ export function ReportSelfCheckPage() {
               {mode === 'record-report' ? (
                 <div className="record-report-options">
                   <div className="record-option-row">
+                    <span>标准</span>
+                    <div className="record-mode-switch" role="radiogroup" aria-label="原始记录标准">
+                      {RECORD_REPORT_STANDARD_OPTIONS.map((option) => (
+                        <button
+                          aria-checked={recordReportStandard === option.value}
+                          className={recordReportStandard === option.value ? 'active' : ''}
+                          key={option.value}
+                          role="radio"
+                          type="button"
+                          onClick={() => {
+                            setRecordReportStandard(option.value);
+                          }}
+                        >
+                          {option.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="record-option-row">
                     <span>模式</span>
                     <div className="record-mode-switch" role="radiogroup" aria-label="原始记录核对模式">
                       {RECORD_REPORT_MODE_OPTIONS.map((option) => (
@@ -656,7 +687,8 @@ export function ReportSelfCheckPage() {
             ) : mode === 'record-report' ? (
               <p>
                 原始记录：{result.record_file_name ?? task?.record_file_name ?? '未返回文件名'}；报告：
-                {result.report_file_name ?? task?.report_file_name ?? result.file_name}
+                {result.report_file_name ?? task?.report_file_name ?? result.file_name}；标准：
+                {formatRecordReportStandard(result.record_report_standard ?? task?.record_report_standard)}
               </p>
             ) : (
               <p>报告：{result.file_name}</p>

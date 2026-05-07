@@ -2,8 +2,12 @@ import re
 from typing import Any
 
 
+RECORD_REPORT_STANDARD_GB9706_1 = "gb9706_1"
+RECORD_REPORT_STANDARD_GB9706_202 = "gb9706_202"
 RECORD_REPORT_CHECK_ID = "RECORD-REPORT-GB9706-1"
 RECORD_REPORT_CHECK_NAME = "原始记录 vs 报告 GB 9706.1-2020 序号级核对"
+RECORD_REPORT_GB9706_202_CHECK_ID = "RECORD-REPORT-GB9706-202"
+RECORD_REPORT_GB9706_202_CHECK_NAME = "原始记录 vs 报告 GB 9706.202-2021 序号级核对"
 
 VALID_JUDGEMENTS = {"符合", "不符合", "不适用"}
 MISSING_JUDGEMENT = "缺失"
@@ -12,12 +16,27 @@ CHECKBOX_TOKENS = {"□", "☐", ""}
 
 
 class RecordReportEvidenceBuilder:
-    def build_all(self, extracted_record: dict[str, Any], extracted_report: dict[str, Any]) -> list[dict[str, Any]]:
+    def build_all(
+        self,
+        extracted_record: dict[str, Any],
+        extracted_report: dict[str, Any],
+        record_report_standard: str = RECORD_REPORT_STANDARD_GB9706_1,
+    ) -> list[dict[str, Any]]:
+        if record_report_standard == RECORD_REPORT_STANDARD_GB9706_202:
+            return self._build_gb9706_202(extracted_record, extracted_report)
+        return self._build_gb9706_1(extracted_record, extracted_report)
+
+    def _build_gb9706_1(
+        self,
+        extracted_record: dict[str, Any],
+        extracted_report: dict[str, Any],
+    ) -> list[dict[str, Any]]:
         record_entries = extract_record_entries(list(extracted_record.get("pages", [])))
         report_rows = extract_report_rows(list(extracted_report.get("pages", [])))
         comparison_bundle = build_record_report_comparisons(record_entries, report_rows)
 
         evidence = {
+            "record_report_standard": RECORD_REPORT_STANDARD_GB9706_1,
             "record_file_name": extracted_record.get("file_name", ""),
             "report_file_name": extracted_report.get("file_name", ""),
             "record_entries": record_entries,
@@ -39,6 +58,54 @@ class RecordReportEvidenceBuilder:
                     "原始记录条款按报告标准条款前缀归并到报告序号。",
                     "原始记录聚合判定：任一不符合为不符合；否则任一符合为符合；否则全不适用为不适用；无证据为缺失。",
                     "真实判定不一致为 error；缺失或无法映射为 warning。",
+                ],
+                "evidence": evidence,
+            }
+        ]
+
+    def _build_gb9706_202(
+        self,
+        extracted_record: dict[str, Any],
+        extracted_report: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        record_entries = extract_gb9706_202_record_entries(list(extracted_record.get("pages", [])))
+        report_rows = extract_gb9706_202_report_rows(list(extracted_report.get("pages", [])))
+        reference_ranges = _filter_reference_ranges_for_report_rows(
+            extract_gb9706_202_report_reference_ranges(list(extracted_report.get("pages", []))),
+            report_rows,
+        )
+        comparison_bundle = build_gb9706_202_record_report_comparisons(
+            record_entries,
+            report_rows,
+            reference_ranges,
+        )
+
+        evidence = {
+            "record_report_standard": RECORD_REPORT_STANDARD_GB9706_202,
+            "record_file_name": extracted_record.get("file_name", ""),
+            "report_file_name": extracted_report.get("file_name", ""),
+            "record_entries": record_entries,
+            "report_rows": report_rows,
+            "report_reference_ranges": reference_ranges,
+            **comparison_bundle,
+        }
+        return [
+            {
+                "check_id": RECORD_REPORT_GB9706_202_CHECK_ID,
+                "check_name": RECORD_REPORT_GB9706_202_CHECK_NAME,
+                "required_details": [
+                    "comparisons",
+                    "mismatches",
+                    "missing_mappings",
+                    "summary_counts",
+                ],
+                "check_rules": [
+                    "按报告中自动识别的 GB 9706.202-2021 检验项目表序号逐项核对。",
+                    "优先按 201.* 或 208 条款号映射；条款拆分无法唯一匹配时，允许按报告连续范围与原始记录序号顺序兜底。",
+                    "若 deterministic_issues 为空且报告判定与原始记录聚合判定一致，应判定 pass；不得仅因兜底映射、父条款分支映射或 OCR 条款号差异给 warning。",
+                    "原始记录判定来自实测数据、备注和绘图符号；无法确定时必须 warning 或交给 Codex，不得静默通过。",
+                    "报告产品技术要求 2.x 行即使引用 GB 9706.202-2021，也不属于本原始记录核对范围。",
+                    "真实判定不一致为 error；缺失、无法映射或符号不确定为 warning。",
                 ],
                 "evidence": evidence,
             }
@@ -68,6 +135,35 @@ def extract_clause_numbers(text: str) -> list[str]:
     pattern = re.compile(r"(?<!\d)(\d{1,4}(?:\s*[.．。]\s*\d{1,4}){1,6})(?!\s*[.．。]\s*\d)")
     for match in pattern.finditer(str(text or "")):
         clause = normalize_clause_number(match.group(1))
+        if clause and clause not in clauses:
+            clauses.append(clause)
+    return clauses
+
+
+def normalize_gb9706_202_clause_number(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+
+    text = text.translate(str.maketrans({"．": ".", "。": ".", "｡": "."}))
+    text = re.sub(r"(?<=\d)\s*\.\s*(?=\d)", ".", text)
+    text = re.sub(r"\s+", "", text)
+    text = re.sub(r"\.+", ".", text).strip(". ")
+    text = _remove_repeated_clause_prefix(text)
+    if text == "208":
+        return text
+    if re.fullmatch(r"201(?:\.\d+){1,6}", text):
+        return text
+    return ""
+
+
+def extract_gb9706_202_clause_numbers(text: str) -> list[str]:
+    clauses: list[str] = []
+    pattern = re.compile(
+        r"(?<!\d)(208|201(?:\s*[.．。]\s*\d{1,4}){1,6}(?:\s+\d{1,4})?)(?!\s*[.．。]\s*\d)"
+    )
+    for match in pattern.finditer(str(text or "")):
+        clause = normalize_gb9706_202_clause_number(match.group(1))
         if clause and clause not in clauses:
             clauses.append(clause)
     return clauses
@@ -279,6 +375,237 @@ def build_record_report_comparisons(
     }
 
 
+def extract_gb9706_202_report_reference_ranges(pages: list[dict[str, Any]]) -> list[dict[str, int]]:
+    ranges: list[dict[str, int]] = []
+    range_pattern = re.compile(r"序号\s*(\d{1,3})\s*(?:~|～|至|到|-)\s*(?:序号)?\s*(\d{1,3})")
+    for page in pages:
+        text = str(page.get("text", ""))
+        normalized = _normalize_text(text)
+        if "9706.202" not in normalized and "9706202" not in normalized:
+            continue
+        for match in range_pattern.finditer(text):
+            if not _range_belongs_to_gb9706_202(text, match.start(), match.end()):
+                continue
+            start = _positive_int(match.group(1))
+            end = _positive_int(match.group(2))
+            if start is None or end is None or end < start:
+                continue
+            ranges.append({"start": start, "end": end, "page": _positive_int(page.get("page")) or 0})
+    return _dedupe_ranges(ranges)
+
+
+def _range_belongs_to_gb9706_202(text: str, range_start: int, range_end: int) -> bool:
+    prior_window_start = max(0, range_start - 120)
+    prior_mentions = _standard_mentions(text[prior_window_start:range_start], prior_window_start)
+    if prior_mentions:
+        prior_start, prior_end, prior_standard = prior_mentions[-1]
+        between_prior = text[prior_end:range_start]
+        if "见" in between_prior and not re.search(r"[。；;\n]", between_prior):
+            return prior_standard == RECORD_REPORT_STANDARD_GB9706_202
+
+    following_mentions = _standard_mentions(text[range_end : range_end + 140], range_end)
+    if following_mentions:
+        return following_mentions[0][2] == RECORD_REPORT_STANDARD_GB9706_202
+
+    if prior_mentions:
+        return prior_mentions[-1][2] == RECORD_REPORT_STANDARD_GB9706_202
+    return False
+
+
+def _standard_mentions(text: str, offset: int = 0) -> list[tuple[int, int, str]]:
+    mentions: list[tuple[int, int, str]] = []
+    pattern = re.compile(
+        r"9706\s*[.．]?\s*202|9706202|9706\s*[.．]?\s*1(?!\s*\d)|97061(?!\d)",
+        re.IGNORECASE,
+    )
+    for match in pattern.finditer(str(text or "")):
+        raw = _normalize_text(match.group(0))
+        standard = RECORD_REPORT_STANDARD_GB9706_202 if "9706202" in raw or "9706.202" in raw else RECORD_REPORT_STANDARD_GB9706_1
+        mentions.append((offset + match.start(), offset + match.end(), standard))
+    return mentions
+
+
+def extract_gb9706_202_report_rows(pages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    reference_ranges = extract_gb9706_202_report_reference_ranges(pages)
+    rows: list[dict[str, Any]] = []
+    last_columns: dict[str, Any] | None = None
+    for page in pages:
+        if not _looks_like_report_table_page(page):
+            continue
+
+        words = _layout_words(page)
+        columns = _report_layout_columns(words, page.get("width")) if words else None
+        if columns is not None:
+            last_columns = columns
+        elif last_columns is not None:
+            columns = last_columns
+        if columns is None:
+            text_rows = _extract_gb9706_202_report_rows_from_text(page)
+            rows.extend(text_rows)
+            continue
+
+        for row in _layout_row_spans(words, columns["sequence"], columns["header_bottom"], page.get("height"), 1, 240):
+            parsed = _parse_gb9706_202_report_layout_row(page, words, columns, row)
+            if parsed is not None:
+                rows.append(parsed)
+
+    deduped_rows = _dedupe_gb9706_202_report_rows(rows)
+    if reference_ranges:
+        ranged = [
+            row
+            for row in deduped_rows
+            if _sequence_in_ranges(_positive_int(row.get("sequence")), reference_ranges)
+        ]
+        if ranged:
+            return ranged
+    return deduped_rows
+
+
+def extract_gb9706_202_record_entries(pages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    entries: list[dict[str, Any]] = []
+    for page in pages:
+        if not _looks_like_gb9706_202_record_page(page):
+            continue
+        layout_entries = _extract_gb9706_202_record_entries_from_layout(page)
+        if layout_entries:
+            entries.extend(layout_entries)
+            continue
+        entries.extend(_extract_gb9706_202_record_entries_from_text(page))
+    return _merge_gb9706_202_record_entries(entries)
+
+
+def build_gb9706_202_record_report_comparisons(
+    record_entries: list[dict[str, Any]],
+    report_rows: list[dict[str, Any]],
+    reference_ranges: list[dict[str, int]],
+) -> dict[str, Any]:
+    comparisons: list[dict[str, Any]] = []
+    mapped_record_entry_ids: set[int] = set()
+    missing_mappings: list[dict[str, Any]] = []
+
+    if not report_rows:
+        missing_mappings.append(
+            {
+                "type": "report_table_missing",
+                "issues": ["report_rows_missing"],
+                "reason": "未能从报告中抽取到 GB 9706.202-2021 检验项目表行。",
+            }
+        )
+    if not record_entries:
+        missing_mappings.append(
+            {
+                "type": "record_table_missing",
+                "issues": ["record_entries_missing"],
+                "reason": "未能从 GB 9706.202-2021 原始记录表 2 中抽取到序号行。",
+            }
+        )
+
+    sequence_mapping_start = _gb9706_202_sequence_mapping_start(report_rows, reference_ranges)
+    for row in sorted(report_rows, key=lambda item: int(item.get("sequence") or 0)):
+        report_clauses = [str(clause) for clause in row.get("standard_clauses", []) if clause]
+        clause_matches = [
+            entry for entry in record_entries if _record_entry_matches_gb9706_202_report_clauses(entry, report_clauses)
+        ]
+        fallback_entry = _gb9706_202_fallback_record_entry(row, record_entries, sequence_mapping_start)
+        matched_record_entries = clause_matches
+        mapping_method = "clause"
+        if (
+            fallback_entry is not None
+            and len(clause_matches) != 1
+            and _gb9706_202_parent_clause_sequence_match(fallback_entry, report_clauses)
+        ):
+            matched_record_entries = [fallback_entry]
+            mapping_method = "parent_clause_sequence"
+        elif fallback_entry is not None and len(clause_matches) != 1:
+            matched_record_entries = [fallback_entry]
+            mapping_method = "sequence_fallback"
+
+        for entry in matched_record_entries:
+            mapped_record_entry_ids.add(id(entry))
+
+        record_judgement = aggregate_record_judgement(matched_record_entries)
+        report_judgement = str(row.get("report_judgement") or "") or MISSING_JUDGEMENT
+        issues = _comparison_issues(report_clauses, matched_record_entries, record_judgement, report_judgement)
+
+        comparison = {
+            "record_report_standard": RECORD_REPORT_STANDARD_GB9706_202,
+            "sequence": row.get("sequence"),
+            "report_page": row.get("page"),
+            "report_standard_clause": row.get("standard_clause", ""),
+            "report_standard_clauses": report_clauses,
+            "report_standard_requirement": row.get("standard_requirement", ""),
+            "report_result": row.get("inspection_result", ""),
+            "report_conclusion": row.get("single_conclusion", ""),
+            "report_judgement": report_judgement,
+            "record_aggregate_judgement": record_judgement,
+            "record_entry_count": len(matched_record_entries),
+            "record_entries": _record_entry_summaries(matched_record_entries),
+            "matched": not issues,
+            "issue": issues[0] if issues else "",
+            "issues": issues,
+            "mapping_method": mapping_method,
+        }
+        comparisons.append(comparison)
+
+        if issues and "mismatch" not in issues:
+            missing_mappings.append(
+                {
+                    "type": "report_row_mapping",
+                    "sequence": row.get("sequence"),
+                    "report_page": row.get("page"),
+                    "report_standard_clause": row.get("standard_clause", ""),
+                    "issues": issues,
+                    "reason": _missing_mapping_reason(issues),
+                }
+            )
+
+    for entry in record_entries:
+        if id(entry) in mapped_record_entry_ids:
+            continue
+        if not entry.get("clauses"):
+            issue = "record_clause_missing"
+            reason = "GB 9706.202 原始记录行未能抽取到可映射的条款号。"
+        else:
+            issue = "record_clause_unmapped"
+            reason = "GB 9706.202 原始记录条款未能匹配到报告中的 201.* 或 208 条款。"
+        missing_mappings.append(
+            {
+                "type": "record_entry_mapping",
+                "record_page": entry.get("page"),
+                "record_sequence": entry.get("record_sequence"),
+                "record_clauses": entry.get("clauses", []),
+                "record_judgement": entry.get("judgement", ""),
+                "issues": [issue],
+                "reason": reason,
+            }
+        )
+
+    mismatches = [comparison for comparison in comparisons if comparison["issue"] == "mismatch"]
+    summary_counts = {
+        "record_report_standard": RECORD_REPORT_STANDARD_GB9706_202,
+        "report_row_count": len(report_rows),
+        "record_entry_count": len(record_entries),
+        "compared_count": sum(
+            1 for comparison in comparisons if not comparison["issues"] or comparison["issues"] == ["mismatch"]
+        ),
+        "matched_count": sum(1 for comparison in comparisons if comparison["matched"]),
+        "mismatch_count": len(mismatches),
+        "missing_mapping_count": len(missing_mappings),
+        "unmapped_record_entry_count": sum(
+            1 for item in missing_mappings if item.get("type") == "record_entry_mapping"
+        ),
+        "record_judgement_counts": _judgement_counts(entry.get("judgement") for entry in record_entries),
+        "report_judgement_counts": _judgement_counts(row.get("report_judgement") for row in report_rows),
+        "report_reference_ranges": reference_ranges,
+    }
+    return {
+        "comparisons": comparisons,
+        "mismatches": mismatches,
+        "missing_mappings": missing_mappings,
+        "summary_counts": summary_counts,
+    }
+
+
 def _looks_like_record_checklist_page(page: dict[str, Any]) -> bool:
     text = _normalize_text(str(page.get("text", "")))
     if all(marker in text for marker in ["序号", "要求描述", "建议观察记录", "符合性"]):
@@ -295,6 +622,531 @@ def _looks_like_report_table_page(page: dict[str, Any]) -> bool:
         and "标准要求" in text
         and "单项结论" in text
     )
+
+
+def _looks_like_gb9706_202_record_page(page: dict[str, Any]) -> bool:
+    text = _normalize_text(str(page.get("text", "")))
+    return "检测原始记录" in text and ("GB9706.202-2021" in text or "GB9706202-2021" in text)
+
+
+def _parse_gb9706_202_report_layout_row(
+    page: dict[str, Any],
+    words: list[dict[str, Any]],
+    columns: dict[str, Any],
+    row: dict[str, Any],
+) -> dict[str, Any] | None:
+    sequence = _positive_int(row.get("row_no"))
+    if sequence is None:
+        return None
+    clause_text = _join_words(_words_in_column_span(words, columns["clause"], row["top"], row["bottom"]))
+    requirement_text = _join_words(
+        _words_in_column_span(words, columns["requirement"], row["top"], row["bottom"])
+    )
+    result_text = _join_words(_words_in_column_span(words, columns["result"], row["top"], row["bottom"]))
+    conclusion_text = _join_words(
+        _words_in_column_span(words, columns["conclusion"], row["top"], row["bottom"])
+    )
+    remark_text = _join_words(_words_in_column_span(words, columns["remark"], row["top"], row["bottom"]))
+    clauses = extract_gb9706_202_clause_numbers(clause_text)
+    if not clauses:
+        clauses = extract_gb9706_202_clause_numbers(requirement_text)
+    if not clauses:
+        return None
+
+    return {
+        "sequence": sequence,
+        "page": page.get("page"),
+        "standard_clause": "、".join(clauses),
+        "standard_clauses": clauses,
+        "standard_requirement": requirement_text,
+        "inspection_result": result_text,
+        "single_conclusion": conclusion_text,
+        "remark": remark_text,
+        "report_judgement": normalize_report_judgement(conclusion_text, result_text, remark_text),
+        "raw_text": " ".join(
+            [
+                str(sequence),
+                clause_text,
+                requirement_text,
+                result_text,
+                conclusion_text,
+                remark_text,
+            ]
+        ).strip(),
+        "source": "layout",
+    }
+
+
+def _extract_gb9706_202_report_rows_from_text(page: dict[str, Any]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    current_lines: list[str] = []
+
+    def flush_current() -> None:
+        if not current_lines:
+            return
+        raw_text = " ".join(current_lines)
+        match = re.match(r"^(?:续\s*)?(\d{1,3})(?:\s+|$)(.*)$", raw_text)
+        if not match:
+            return
+        sequence = _positive_int(match.group(1))
+        if sequence is None:
+            return
+        body = match.group(2)
+        clauses = extract_gb9706_202_clause_numbers(body)
+        if not clauses:
+            return
+        judgement = _last_judgement_token(body)
+        rows.append(
+            {
+                "sequence": sequence,
+                "page": page.get("page"),
+                "standard_clause": "、".join(clauses),
+                "standard_clauses": clauses,
+                "standard_requirement": body,
+                "inspection_result": "",
+                "single_conclusion": judgement,
+                "remark": "",
+                "report_judgement": normalize_report_judgement(judgement, body, ""),
+                "raw_text": raw_text,
+                "source": "text",
+            }
+        )
+
+    for line in _compact_lines(str(page.get("text", ""))):
+        if _looks_like_report_header_line(line):
+            continue
+        match = re.match(r"^(?:续\s*)?(\d{1,3})(?:\s+|$)", line)
+        if match:
+            flush_current()
+            current_lines = [line]
+            continue
+        if current_lines:
+            current_lines.append(line)
+
+    flush_current()
+    return rows
+
+
+def _extract_gb9706_202_record_entries_from_layout(page: dict[str, Any]) -> list[dict[str, Any]]:
+    words = _layout_words(page)
+    if not words:
+        return []
+    columns = _gb9706_202_record_layout_columns(words, page.get("width"))
+    if columns is None:
+        return []
+
+    entries: list[dict[str, Any]] = []
+    for row in _gb9706_202_record_row_spans(words, columns, page):
+        sequence = _positive_int(row.get("row_no"))
+        if sequence is None:
+            continue
+        item_text = _join_words(_words_in_column_span(words, columns["item"], row["top"], row["bottom"]))
+        clause_text = _join_words(_words_in_column_span(words, columns["clause"], row["top"], row["bottom"]))
+        requirement_text = _join_words(
+            _words_in_column_span(words, columns["requirement"], row["top"], row["bottom"])
+        )
+        measured_text = _join_words(_words_in_column_span(words, columns["measured"], row["top"], row["bottom"]))
+        remark_text = _join_words(_words_in_column_span(words, columns["remark"], row["top"], row["bottom"]))
+        clauses = extract_gb9706_202_clause_numbers(clause_text) or extract_gb9706_202_clause_numbers(
+            requirement_text
+        )
+        if not clauses and not (item_text or requirement_text or measured_text or remark_text):
+            continue
+        judgement, judgement_source = _gb9706_202_record_judgement(page, columns, row, measured_text, remark_text)
+        entries.append(
+            {
+                "page": page.get("page"),
+                "pages": [_positive_int(page.get("page")) or page.get("page")],
+                "record_sequence": sequence,
+                "clauses": clauses,
+                "inspection_item": item_text,
+                "requirement_text": requirement_text,
+                "measured_data": measured_text,
+                "remark": remark_text,
+                "observation_text": measured_text,
+                "judgement": judgement,
+                "symbol_judgement": judgement_source,
+                "source": "layout",
+            }
+        )
+    return entries
+
+
+def _gb9706_202_record_row_spans(
+    words: list[dict[str, Any]],
+    columns: dict[str, Any],
+    page: dict[str, Any],
+) -> list[dict[str, Any]]:
+    _left, right = columns["sequence"]
+    sequence_right = min(float(right), 55.0)
+    sequence_words = []
+    for word in words:
+        if word["y0"] <= columns["header_bottom"] or word["y0"] >= 780:
+            continue
+        if not (word["x0"] <= sequence_right and _word_center_x(word) <= sequence_right):
+            continue
+        if not re.fullmatch(r"\d{1,2}", word["text"]):
+            continue
+        sequence = int(word["text"])
+        if 1 <= sequence <= 99:
+            sequence_words.append(word)
+
+    horizontal_lines = _horizontal_table_lines(page, min_width=100, y_min=max(0, columns["header_bottom"] - 25))
+
+    def row_top_for(word: dict[str, Any]) -> float:
+        candidates = [line for line in horizontal_lines if columns["header_bottom"] <= line <= word["y0"] + 1]
+        if candidates:
+            return max(candidates) - 0.5
+        return columns["header_bottom"] + 1 if word is sequence_words[0] else word["y0"] - 2
+
+    page_height = page.get("height")
+    fallback_bottom = float(page_height) if isinstance(page_height, (int, float)) else max(word["y1"] for word in words) + 20
+    fallback_bottom = min(fallback_bottom, 780.0)
+    rows = []
+    for index, word in enumerate(sequence_words):
+        next_top = row_top_for(sequence_words[index + 1]) if index + 1 < len(sequence_words) else fallback_bottom
+        rows.append({"row_no": word["text"], "top": row_top_for(word), "bottom": next_top})
+    return rows
+
+
+def _extract_gb9706_202_record_entries_from_text(page: dict[str, Any]) -> list[dict[str, Any]]:
+    entries: list[dict[str, Any]] = []
+    for line in _compact_lines(str(page.get("text", ""))):
+        match = re.match(r"^(?:续\s*)?(\d{1,2})\s+(.+)$", line)
+        if not match:
+            continue
+        clauses = extract_gb9706_202_clause_numbers(match.group(2))
+        if not clauses:
+            continue
+        judgement = normalize_judgement(match.group(2)) or MISSING_JUDGEMENT
+        entries.append(
+            {
+                "page": page.get("page"),
+                "pages": [_positive_int(page.get("page")) or page.get("page")],
+                "record_sequence": int(match.group(1)),
+                "clauses": clauses,
+                "inspection_item": "",
+                "requirement_text": match.group(2),
+                "measured_data": "",
+                "remark": "",
+                "observation_text": "",
+                "judgement": judgement,
+                "symbol_judgement": "text" if judgement != MISSING_JUDGEMENT else "missing",
+                "source": "text",
+            }
+        )
+    return entries
+
+
+def _gb9706_202_record_layout_columns(
+    words: list[dict[str, Any]],
+    page_width: Any,
+) -> dict[str, Any] | None:
+    sequence = _find_header_group(words, "序号")
+    item = _find_header_group(words, "检验项目")
+    clause = _find_header_group(words, "条款号")
+    requirement = _find_header_group(words, "标准要求")
+    measured = _find_header_group(words, "实测数据")
+    remark = _find_header_group(words, "备注")
+    headers = [sequence, item, clause, requirement, measured, remark]
+    if not all(headers):
+        if not isinstance(page_width, (int, float)) or page_width <= 0:
+            return None
+        return {
+            "header_bottom": 185.0,
+            "sequence": (0.0, 55.0),
+            "item": (55.0, 108.0),
+            "clause": (108.0, 153.0),
+            "requirement": (153.0, 350.0),
+            "measured": (350.0, 500.0),
+            "remark": (500.0, float(page_width)),
+        }
+
+    centers = [_box_center_x(header) for header in headers if header is not None]
+    if centers != sorted(centers):
+        return None
+
+    right_edge = _page_right_edge(page_width, words, centers[-1])
+    boundaries = [0.0]
+    boundaries.extend((centers[index] + centers[index + 1]) / 2 for index in range(len(centers) - 1))
+    boundaries.append(right_edge)
+    return {
+        "header_bottom": max(float(header["y1"]) for header in headers if header is not None),
+        "sequence": (boundaries[0], boundaries[1]),
+        "item": (boundaries[1], boundaries[2]),
+        "clause": (boundaries[2], boundaries[3]),
+        "requirement": (boundaries[3], boundaries[4]),
+        "measured": (boundaries[4], boundaries[5]),
+        "remark": (boundaries[5], boundaries[6]),
+    }
+
+
+def _gb9706_202_record_judgement(
+    page: dict[str, Any],
+    columns: dict[str, Any],
+    row: dict[str, Any],
+    measured_text: str,
+    remark_text: str,
+) -> tuple[str, str]:
+    combined = _normalize_text(f"{measured_text} {remark_text}")
+    if any(token in combined for token in ["×", "X", "不符合", "不合格"]):
+        return "不符合", "text_nonconforming"
+    if any(token in combined for token in ["△", "∆", "Δ", "不适用", "不涉及"]):
+        return "不适用", "text_not_applicable"
+    if any(token in combined for token in ["√", "✓", "✔", "符合要求", "符合"]):
+        return "符合", "text_conforming"
+
+    drawing_judgement = _gb9706_202_record_drawing_judgement(page, columns, row)
+    if drawing_judgement:
+        return drawing_judgement
+    if measured_text.strip() and not _is_blank_marker(measured_text):
+        return "符合", "typed_measured_data"
+    return MISSING_JUDGEMENT, "missing_or_uncertain"
+
+
+def _gb9706_202_record_drawing_judgement(
+    page: dict[str, Any],
+    columns: dict[str, Any],
+    row: dict[str, Any],
+) -> tuple[str, str] | None:
+    measured_left, _ = columns["measured"]
+    _, remark_right = columns["remark"]
+    marks = []
+    for drawing in _drawings(page):
+        rect = drawing.get("rect")
+        if not isinstance(rect, dict) or not _drawing_has_dark_fill(drawing):
+            continue
+        center_x = _rect_center_x(rect)
+        center_y = _rect_center_y(rect)
+        if not (measured_left <= center_x <= remark_right and row["top"] <= center_y < row["bottom"]):
+            continue
+        width = rect["x1"] - rect["x0"]
+        height = rect["y1"] - rect["y0"]
+        if width < 4 or height < 4:
+            continue
+        area = _rect_area(rect)
+        open_distance = _drawing_path_open_distance(drawing)
+        marks.append(
+            {
+                "width": width,
+                "height": height,
+                "aspect": width / height if height else 0,
+                "area": area,
+                "kind": _gb9706_202_drawing_mark_kind(width, height, area, open_distance),
+            }
+        )
+
+    if not marks:
+        return None
+    if any(mark["kind"] == "check" for mark in marks):
+        return "符合", "drawing_check_mark"
+    if any(mark["kind"] == "delta" for mark in marks):
+        return "不适用", "drawing_delta_mark"
+    return None
+
+
+def _gb9706_202_drawing_mark_kind(
+    width: float,
+    height: float,
+    area: float,
+    open_distance: float | None = None,
+) -> str:
+    aspect = width / height if height else 0
+    if aspect < 0.45:
+        return ""
+    if (
+        open_distance is not None
+        and open_distance >= max(width, height) * 0.75
+        and width >= 50
+        and height >= 45
+        and aspect <= 1.8
+    ):
+        return "check"
+    if width >= 70 and height >= 55 and aspect <= 2.1:
+        return "check"
+    if area >= 2850 and width >= 52 and height >= 50 and aspect <= 1.6:
+        return "check"
+    if 12 <= width <= 65 and 10 <= height <= 55 and 0.75 <= aspect <= 2.3:
+        return "delta"
+    return ""
+
+
+def _is_blank_marker(text: str) -> bool:
+    compact = _normalize_text(text)
+    if not compact:
+        return True
+    return all(char in {"/", "／", "-", "—", "–", "－"} for char in compact)
+
+
+def _merge_gb9706_202_record_entries(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    by_sequence: dict[int, dict[str, Any]] = {}
+    judgement_parts: dict[int, list[dict[str, str]]] = {}
+    for entry in entries:
+        sequence = _positive_int(entry.get("record_sequence"))
+        if sequence is None:
+            continue
+        judgement_parts.setdefault(sequence, []).append(
+            {
+                "judgement": str(entry.get("judgement") or ""),
+                "source": str(entry.get("symbol_judgement") or ""),
+            }
+        )
+        if sequence not in by_sequence:
+            copied = dict(entry)
+            copied["record_sequence"] = sequence
+            copied["pages"] = _dedupe_pages(copied.get("pages", [copied.get("page")]))
+            by_sequence[sequence] = copied
+            continue
+
+        existing = by_sequence[sequence]
+        existing["pages"] = _dedupe_pages([*existing.get("pages", []), entry.get("page")])
+        existing["page"] = existing["pages"][0] if existing["pages"] else existing.get("page")
+        existing["clauses"] = _dedupe_list([*existing.get("clauses", []), *entry.get("clauses", [])])
+        for key in ["inspection_item", "requirement_text", "measured_data", "remark", "observation_text"]:
+            existing[key] = " ".join(part for part in [existing.get(key, ""), entry.get(key, "")] if part).strip()
+
+    merged = []
+    for sequence in sorted(by_sequence):
+        entry = by_sequence[sequence]
+        part_judgements = [part["judgement"] for part in judgement_parts.get(sequence, [])]
+        entry["judgement"] = aggregate_record_judgement([{"judgement": value} for value in part_judgements])
+        sources = [part["source"] for part in judgement_parts.get(sequence, []) if part["source"]]
+        entry["symbol_judgement"] = "、".join(_dedupe_list(sources))
+        merged.append(entry)
+    return merged
+
+
+def _dedupe_gb9706_202_report_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    by_sequence: dict[int, dict[str, Any]] = {}
+    for row in rows:
+        sequence = _positive_int(row.get("sequence"))
+        if sequence is None:
+            continue
+        if sequence not in by_sequence:
+            copied = dict(row)
+            copied["sequence"] = sequence
+            copied["pages"] = [_positive_int(row.get("page")) or row.get("page")]
+            by_sequence[sequence] = copied
+            continue
+        existing = by_sequence[sequence]
+        existing["pages"] = _dedupe_pages([*existing.get("pages", []), row.get("page")])
+        existing["page"] = existing["pages"][0] if existing["pages"] else existing.get("page")
+        existing["standard_clauses"] = _dedupe_list([*existing.get("standard_clauses", []), *row.get("standard_clauses", [])])
+        existing["standard_clause"] = "、".join(existing["standard_clauses"])
+        for key in ["standard_requirement", "inspection_result", "single_conclusion", "remark", "raw_text"]:
+            existing[key] = " ".join(part for part in [existing.get(key, ""), row.get(key, "")] if part).strip()
+        existing["report_judgement"] = existing.get("report_judgement") or row.get("report_judgement", "")
+    return [by_sequence[key] for key in sorted(by_sequence)]
+
+
+def _gb9706_202_sequence_mapping_start(
+    report_rows: list[dict[str, Any]],
+    reference_ranges: list[dict[str, int]],
+) -> int | None:
+    sequences = [_positive_int(row.get("sequence")) for row in report_rows]
+    sequences = [sequence for sequence in sequences if sequence is not None]
+    if not sequences:
+        return None
+    first_sequence = min(sequences)
+    if reference_ranges:
+        containing = [
+            item["start"]
+            for item in reference_ranges
+            if item.get("start") and item["start"] <= first_sequence <= item["end"]
+        ]
+        if containing:
+            return min(containing)
+    return first_sequence
+
+
+def _gb9706_202_fallback_record_entry(
+    report_row: dict[str, Any],
+    record_entries: list[dict[str, Any]],
+    sequence_mapping_start: int | None,
+) -> dict[str, Any] | None:
+    report_sequence = _positive_int(report_row.get("sequence"))
+    if report_sequence is None or sequence_mapping_start is None:
+        return None
+    record_sequence = report_sequence - sequence_mapping_start + 1
+    for entry in record_entries:
+        if _positive_int(entry.get("record_sequence")) == record_sequence:
+            return entry
+    return None
+
+
+def _gb9706_202_parent_clause_sequence_match(entry: dict[str, Any], report_clauses: list[str]) -> bool:
+    record_clauses = [
+        normalize_gb9706_202_clause_number(str(clause))
+        for clause in entry.get("clauses", [])
+        if normalize_gb9706_202_clause_number(str(clause))
+    ]
+    for report_clause in report_clauses:
+        parent_clause = normalize_gb9706_202_clause_number(str(report_clause))
+        if not _gb9706_202_is_branch_parent_clause(parent_clause):
+            continue
+        if any(clause == parent_clause or clause.startswith(f"{parent_clause}.") for clause in record_clauses):
+            return True
+    return False
+
+
+def _gb9706_202_is_branch_parent_clause(clause: str) -> bool:
+    parts = clause.split(".")
+    return len(parts) == 3 and parts[0] == "201" and all(part.isdigit() for part in parts)
+
+
+def _record_entry_matches_gb9706_202_report_clauses(entry: dict[str, Any], report_clauses: list[str]) -> bool:
+    if not report_clauses:
+        return False
+    for record_clause in entry.get("clauses", []):
+        for report_clause in report_clauses:
+            if _gb9706_202_clause_matches(str(record_clause), str(report_clause)):
+                return True
+    return False
+
+
+def _gb9706_202_clause_matches(record_clause: str, report_clause: str) -> bool:
+    record_clause = normalize_gb9706_202_clause_number(record_clause)
+    report_clause = normalize_gb9706_202_clause_number(report_clause)
+    if not record_clause or not report_clause:
+        return False
+    return record_clause == report_clause or record_clause.startswith(f"{report_clause}.") or report_clause.startswith(f"{record_clause}.")
+
+
+def _sequence_in_ranges(sequence: int | None, ranges: list[dict[str, int]]) -> bool:
+    if sequence is None:
+        return False
+    return any(item["start"] <= sequence <= item["end"] for item in ranges)
+
+
+def _filter_reference_ranges_for_report_rows(
+    ranges: list[dict[str, int]],
+    report_rows: list[dict[str, Any]],
+) -> list[dict[str, int]]:
+    sequences = [_positive_int(row.get("sequence")) for row in report_rows]
+    sequences = [sequence for sequence in sequences if sequence is not None]
+    if not ranges or not sequences:
+        return ranges
+    first_sequence = min(sequences)
+    last_sequence = max(sequences)
+    filtered = [
+        item
+        for item in ranges
+        if item.get("start", 0) <= first_sequence <= item.get("end", 0)
+        or item.get("start", 0) <= last_sequence <= item.get("end", 0)
+    ]
+    return filtered or ranges
+
+
+def _dedupe_ranges(ranges: list[dict[str, int]]) -> list[dict[str, int]]:
+    deduped = []
+    seen = set()
+    for item in ranges:
+        key = (item.get("start"), item.get("end"))
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(item)
+    return deduped
 
 
 def _extract_record_entries_from_layout(page: dict[str, Any]) -> list[dict[str, Any]]:
@@ -863,6 +1715,28 @@ def _drawing_ops_for(drawing: dict[str, Any]) -> list[str]:
     return result
 
 
+def _drawing_path_open_distance(drawing: dict[str, Any]) -> float | None:
+    start = _coerce_point(drawing.get("path_start"))
+    end = _coerce_point(drawing.get("path_end"))
+    if start is None or end is None:
+        return None
+    return ((start["x"] - end["x"]) ** 2 + (start["y"] - end["y"]) ** 2) ** 0.5
+
+
+def _coerce_point(value: Any) -> dict[str, float] | None:
+    if isinstance(value, dict):
+        try:
+            return {"x": float(value["x"]), "y": float(value["y"])}
+        except (KeyError, TypeError, ValueError):
+            return None
+    if isinstance(value, (list, tuple)) and len(value) >= 2:
+        try:
+            return {"x": float(value[0]), "y": float(value[1])}
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
 def _drawings(page: dict[str, Any]) -> list[dict[str, Any]]:
     drawings = []
     for drawing in page.get("drawings", []):
@@ -1106,11 +1980,16 @@ def _record_entry_summaries(entries: list[dict[str, Any]]) -> list[dict[str, Any
     return [
         {
             "page": entry.get("page"),
+            "pages": entry.get("pages", []),
             "record_sequence": entry.get("record_sequence"),
             "clauses": entry.get("clauses", []),
             "judgement": entry.get("judgement", ""),
+            "inspection_item": entry.get("inspection_item", ""),
             "requirement_text": _excerpt(str(entry.get("requirement_text", "")), 500),
             "observation_text": _excerpt(str(entry.get("observation_text", "")), 300),
+            "measured_data": _excerpt(str(entry.get("measured_data", "")), 300),
+            "remark": _excerpt(str(entry.get("remark", "")), 200),
+            "symbol_judgement": entry.get("symbol_judgement", ""),
         }
         for entry in entries
     ]
@@ -1274,6 +2153,15 @@ def _positive_int(value: Any) -> int | None:
     except (TypeError, ValueError):
         return None
     return number if number > 0 else None
+
+
+def _dedupe_pages(values: Any) -> list[int]:
+    pages: list[int] = []
+    for value in values:
+        page = _positive_int(value)
+        if page is not None and page not in pages:
+            pages.append(page)
+    return pages
 
 
 def _remove_repeated_clause_prefix(text: str) -> str:

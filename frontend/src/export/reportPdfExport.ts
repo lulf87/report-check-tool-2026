@@ -19,6 +19,7 @@ const DETAIL_LABELS: Record<string, string> = {
   actual_conclusion: '实际单项结论',
   actual_report_clause_prefixes: '报告实际条款',
   actual_value: '实际值',
+  clauses: '条款',
   component_name: '组件名称',
   declared_clause_prefixes: '首页声明条款',
   expected: '应为',
@@ -30,6 +31,8 @@ const DETAIL_LABELS: Record<string, string> = {
   leaf_clause_comparisons: '最细条款一致性判断',
   leaf_clause_reviews: '最细条款证据',
   matched: '是否一致',
+  mapping_method: '映射方式',
+  measured_data: '实测数据',
   missing_declared_clause_prefixes: '缺漏条款',
   page: '页码',
   pages: '页码',
@@ -42,20 +45,37 @@ const DETAIL_LABELS: Record<string, string> = {
   ptr_reference_context_text: 'PTR 引用上下文',
   ptr_requirement_text: 'PTR 要求',
   reason: '原因',
+  record_aggregate_judgement: '原始记录聚合判定',
+  record_entries: '原始记录小项',
+  record_entry_count: '原始记录小项数量',
+  record_report_standard: '核对标准',
+  record_sequence: '原始记录序号',
+  remark: '备注',
   report_candidate_pages: '报告候选页',
   report_display_text: '报告内容',
   report_entry_pages: '报告页码',
+  report_conclusion: '报告单项结论',
+  report_judgement: '报告判定',
+  report_page: '报告页码',
   report_presence: '报告是否出现',
   report_scope_text: '报告首页检验项目',
+  report_result: '报告检验结果',
+  report_standard_clause: '报告标准条款',
+  report_standard_clauses: '报告标准条款',
+  report_standard_requirement: '报告标准要求',
   report_standard_requirement_text: '报告标准要求摘录',
+  requirement_text: '原始记录要求',
   source_a_name: '来源 A',
   source_a_page: 'A 页码',
   source_a_value: 'A 值',
   source_b_name: '来源 B',
   source_b_page: 'B 页码',
   source_b_value: 'B 值',
+  sequence: '报告序号',
+  sequence_number: '序号',
   status: '状态',
   summary: '摘要',
+  symbol_judgement: '原始记录符号判断',
   test_results: '检验结果',
   title: '标题',
 };
@@ -65,10 +85,19 @@ const PREFERRED_DETAIL_COLUMNS = [
   'prefix',
   'ptr_clause_prefix',
   'parent_prefix',
+  'record_report_standard',
+  'mapping_method',
+  'sequence',
+  'report_page',
+  'report_standard_clause',
+  'record_sequence',
+  'clauses',
   'field',
   'component_name',
   'inspection_project',
+  'inspection_item',
   'page',
+  'pages',
   'ptr_page',
   'report_entry_pages',
   'report_presence',
@@ -83,13 +112,23 @@ const PREFERRED_DETAIL_COLUMNS = [
   'test_results',
   'actual_conclusion',
   'expected_conclusion',
-  'matched',
+  'report_judgement',
+  'record_aggregate_judgement',
   'judgement',
+  'measured_data',
+  'remark',
+  'symbol_judgement',
+  'matched',
   'reason',
 ];
 
 export function buildReportExportTitle(result: ReportSelfCheckResult, mode: ReportExportMode) {
-  const prefix = mode === 'ptr-report' ? 'PTR与报告核对' : mode === 'record-report' ? '原始记录与报告核对' : '报告自身核对';
+  const prefix =
+    mode === 'ptr-report'
+      ? 'PTR与报告核对'
+      : mode === 'record-report'
+        ? `原始记录与报告核对-${recordReportStandardLabel(result.record_report_standard)}`
+        : '报告自身核对';
   return `${prefix}-${sanitizeFileName(result.report_file_name ?? result.file_name ?? 'result')}`;
 }
 
@@ -181,6 +220,7 @@ function coverSection(result: ReportSelfCheckResult, mode: ReportExportMode, tit
         ? [
             ['原始记录文件', result.record_file_name ?? '未返回文件名'],
             ['报告文件', result.report_file_name ?? result.file_name],
+            ['核对标准', recordReportStandardLabel(result.record_report_standard)],
           ]
       : [['报告文件', result.file_name]];
   const coverNote =
@@ -215,6 +255,9 @@ function coverSection(result: ReportSelfCheckResult, mode: ReportExportMode, tit
 }
 
 function summarySection(result: ReportSelfCheckResult) {
+  const standardMetric = result.record_report_standard
+    ? metricBlock('核对标准', recordReportStandardLabel(result.record_report_standard))
+    : '';
   return `<section class="report-section">
     <h2>核对结论摘要</h2>
     <div class="summary-grid">
@@ -223,6 +266,7 @@ function summarySection(result: ReportSelfCheckResult) {
       ${metricBlock('通过', String(result.summary.pass_count), 'pass')}
       ${metricBlock('需复核', String(result.summary.warning_count), 'warning')}
       ${metricBlock('发现问题', String(result.summary.error_count), 'error')}
+      ${standardMetric}
     </div>
   </section>`;
 }
@@ -570,6 +614,10 @@ function humanTextValue(value: unknown, fallback: string) {
 function readableValue(value: unknown): string {
   if (value === null || value === undefined || value === '') return '未提供';
   if (typeof value === 'boolean') return value ? '是' : '否';
+  if (value === 'gb9706_1' || value === 'gb9706_202') return recordReportStandardLabel(value);
+  if (value === 'parent_clause_sequence') return '父条款分支顺序匹配';
+  if (value === 'sequence_fallback') return '序号顺序兜底';
+  if (value === 'clause') return '条款号匹配';
   if (typeof value === 'string' || typeof value === 'number') return String(value);
   if (Array.isArray(value)) {
     if (value.length === 0) return '无';
@@ -638,6 +686,10 @@ function statusLabel(status: string) {
 
 function confidenceLabel(confidence: string) {
   return CONFIDENCE_LABELS[confidence] ?? confidence;
+}
+
+function recordReportStandardLabel(value: unknown) {
+  return value === 'gb9706_202' ? 'GB 9706.202-2021' : 'GB 9706.1-2020';
 }
 
 function labelFor(key: string) {

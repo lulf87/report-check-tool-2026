@@ -101,8 +101,37 @@ def test_prompt_uses_record_report_role_for_record_report_packages():
     )
 
     assert "原始记录与检验报告判定一致性" in prompt
+    assert "GB 9706.1-2020" in prompt
     assert "一个 report 序号" in prompt
     assert "报告内部核对" not in prompt.split("。", maxsplit=1)[0]
+
+
+def test_prompt_uses_gb9706_202_record_report_instructions():
+    prompt = CodexJudgeClient(transport=StaticJudgeTransport("{}"))._build_prompt(
+        {
+            "check_id": "RECORD-REPORT-GB9706-202-119",
+            "check_name": "序号 119 / 条款 201.4.2.3.101 原始记录核对",
+            "required_details": ["record_entries", "report_judgement"],
+            "check_rules": ["只判断一个 report 序号"],
+            "evidence": {
+                "record_report_standard": "gb9706_202",
+                "deterministic_issues": [],
+                "deterministic_status": "pass",
+                "mapping_method": "parent_clause_sequence",
+                "report_judgement": "不适用",
+                "record_aggregate_judgement": "不适用",
+            },
+        }
+    )
+
+    assert "GB 9706.202-2021" in prompt
+    assert "实测数据" in prompt
+    assert "手写符号" in prompt
+    assert "勾选判定" not in prompt.split("。", maxsplit=3)[0]
+    assert "deterministic_issues 为空" in prompt
+    assert "必须输出 pass" in prompt
+    assert "parent_clause_sequence" in prompt
+    assert "不得仅因兜底映射" in prompt
 
 
 def test_codex_cli_command_uses_supported_read_only_last_message_flags(monkeypatch):

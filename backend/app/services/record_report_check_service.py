@@ -22,6 +22,8 @@ from app.services.codex_judge_client import CodexJudgeClient
 from app.services.record_report_evidence_builder import (
     RECORD_REPORT_CHECK_ID,
     RECORD_REPORT_CHECK_NAME,
+    RECORD_REPORT_STANDARD_GB9706_1,
+    RECORD_REPORT_STANDARD_GB9706_202,
     RecordReportEvidenceBuilder,
 )
 
@@ -39,6 +41,7 @@ _JUDGE_CACHE: OrderedDict[str, dict[str, Any]] = OrderedDict()
 class RecordReportCheckResult(ReportSelfCheckResult):
     record_file_name: str = ""
     report_file_name: str = ""
+    record_report_standard: str = RECORD_REPORT_STANDARD_GB9706_1
     record_report_mode: str = RECORD_REPORT_MODE_QUICK
     record_report_concurrency: int = DEFAULT_RECORD_REPORT_CONCURRENCY
     record_report_summary: dict[str, Any] = Field(default_factory=dict)
@@ -61,8 +64,14 @@ class RecordReportCheckService:
         progress_callback: ProgressCallback | None = None,
         record_report_mode: str = RECORD_REPORT_MODE_QUICK,
         record_report_concurrency: int = DEFAULT_RECORD_REPORT_CONCURRENCY,
+        record_report_standard: str = RECORD_REPORT_STANDARD_GB9706_1,
     ) -> RecordReportCheckResult:
-        packages = self.evidence_builder.build_all(extracted_record, extracted_report)
+        standard = normalize_record_report_standard(record_report_standard)
+        packages = self.evidence_builder.build_all(
+            extracted_record,
+            extracted_report,
+            record_report_standard=standard,
+        )
         runtime_packages = _comparison_runtime_packages(packages)
         mode, concurrency = normalize_record_report_options(record_report_mode, record_report_concurrency)
         check_results = _run_runtime_packages(
@@ -78,6 +87,7 @@ class RecordReportCheckService:
             file_name=str(extracted_report.get("file_name", "")),
             record_file_name=str(extracted_record.get("file_name", "")),
             report_file_name=str(extracted_report.get("file_name", "")),
+            record_report_standard=standard,
             record_report_mode=mode,
             record_report_concurrency=concurrency,
             record_report_summary=_extract_summary(packages),
@@ -196,6 +206,16 @@ def _normalize_record_report_mode(value: str) -> str:
     return RECORD_REPORT_MODE_QUICK
 
 
+def normalize_record_report_standard(value: str) -> str:
+    normalized = str(value or "").strip().lower().replace("-", "_").replace(".", "_")
+    normalized = normalized.replace(" ", "")
+    if normalized in {"gb9706_202", "9706_202", "gb_9706_202", "gb9706202"}:
+        return RECORD_REPORT_STANDARD_GB9706_202
+    if "9706_202" in normalized or "9706202" in normalized:
+        return RECORD_REPORT_STANDARD_GB9706_202
+    return RECORD_REPORT_STANDARD_GB9706_1
+
+
 def _normalize_concurrency(value: Any) -> int:
     try:
         number = int(value)
@@ -213,6 +233,7 @@ def _build_deterministic_check_result(package: dict[str, Any], mode: str) -> Che
     status = CheckStatus(str(evidence.get("deterministic_status") or CheckStatus.PASS))
     issues = [str(issue) for issue in evidence.get("deterministic_issues", []) if issue]
     comparison = {
+        "record_report_standard": evidence.get("record_report_standard", RECORD_REPORT_STANDARD_GB9706_1),
         "sequence": evidence.get("sequence"),
         "report_page": evidence.get("report_page"),
         "report_standard_clause": evidence.get("report_standard_clause", ""),
@@ -224,6 +245,7 @@ def _build_deterministic_check_result(package: dict[str, Any], mode: str) -> Che
         "record_aggregate_judgement": evidence.get("record_aggregate_judgement", ""),
         "record_entry_count": evidence.get("record_entry_count", 0),
         "record_entries": list(evidence.get("record_entries", [])),
+        "mapping_method": evidence.get("mapping_method", ""),
         "issues": issues,
     }
     details = {
@@ -291,6 +313,8 @@ def _build_comparison_package(
     evidence: dict[str, Any],
     comparison: dict[str, Any],
 ) -> dict[str, Any]:
+    base_check_id = str(package.get("check_id") or RECORD_REPORT_CHECK_ID)
+    base_check_name = str(package.get("check_name") or RECORD_REPORT_CHECK_NAME)
     sequence = _positive_int(comparison.get("sequence"))
     issues = [str(issue) for issue in comparison.get("issues", []) if issue]
     report_clause = str(comparison.get("report_standard_clause") or "")
@@ -311,11 +335,12 @@ def _build_comparison_package(
         deterministic_summary = f"序号 {sequence}：判定一致，匹配原始记录小项 {record_entry_count} 项。"
 
     return {
-        "check_id": f"{RECORD_REPORT_CHECK_ID}-{sequence:03d}" if sequence is not None else str(package.get("check_id") or RECORD_REPORT_CHECK_ID),
-        "check_name": f"序号 {sequence} / 条款 {report_clause} 原始记录核对" if sequence is not None else str(package.get("check_name") or RECORD_REPORT_CHECK_NAME),
-        "required_details": list(RECORD_REPORT_REQUIRED_DETAILS),
-        "check_rules": list(RECORD_REPORT_CHECK_RULES),
+        "check_id": f"{base_check_id}-{sequence:03d}" if sequence is not None else base_check_id,
+        "check_name": f"序号 {sequence} / 条款 {report_clause} 原始记录核对" if sequence is not None else base_check_name,
+        "required_details": list(package.get("required_details") or RECORD_REPORT_REQUIRED_DETAILS),
+        "check_rules": list(package.get("check_rules") or RECORD_REPORT_CHECK_RULES),
         "evidence": {
+            "record_report_standard": evidence.get("record_report_standard", RECORD_REPORT_STANDARD_GB9706_1),
             "record_file_name": evidence.get("record_file_name", ""),
             "report_file_name": evidence.get("report_file_name", ""),
             "summary_counts": dict(evidence.get("summary_counts", {})),
@@ -330,6 +355,7 @@ def _build_comparison_package(
             "record_aggregate_judgement": record_judgement,
             "record_entry_count": record_entry_count,
             "record_entries": list(comparison.get("record_entries", [])),
+            "mapping_method": comparison.get("mapping_method", ""),
             "deterministic_issues": issues,
             "deterministic_status": deterministic_status,
             "deterministic_summary": deterministic_summary,
@@ -351,9 +377,11 @@ def _merge_comparison_details(check_result: CheckResult, package: dict[str, Any]
         "report_result",
         "report_conclusion",
         "report_judgement",
+        "record_report_standard",
         "record_aggregate_judgement",
         "record_entry_count",
         "record_entries",
+        "mapping_method",
         "deterministic_issues",
         "deterministic_status",
         "deterministic_summary",

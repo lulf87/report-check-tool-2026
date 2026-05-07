@@ -8,10 +8,15 @@ from app.services.record_report_check_service import RecordReportCheckService
 class FakeRecordReportEvidenceBuilder:
     def __init__(self, evidence: dict[str, Any]):
         self.evidence = evidence
-        self.calls: list[tuple[dict[str, Any], dict[str, Any]]] = []
+        self.calls: list[tuple[dict[str, Any], dict[str, Any], str]] = []
 
-    def build_all(self, extracted_record: dict[str, Any], extracted_report: dict[str, Any]) -> list[dict[str, Any]]:
-        self.calls.append((extracted_record, extracted_report))
+    def build_all(
+        self,
+        extracted_record: dict[str, Any],
+        extracted_report: dict[str, Any],
+        record_report_standard: str = "gb9706_1",
+    ) -> list[dict[str, Any]]:
+        self.calls.append((extracted_record, extracted_report, record_report_standard))
         return [
             {
                 "check_id": "RECORD-REPORT-GB9706-1",
@@ -75,6 +80,7 @@ def _clear_judge_cache() -> None:
 
 def _happy_evidence() -> dict[str, Any]:
     return {
+        "record_report_standard": "gb9706_1",
         "record_file_name": "record.pdf",
         "report_file_name": "report.pdf",
         "comparisons": [
@@ -115,12 +121,13 @@ def test_record_report_service_happy_path_returns_pass_result_and_progress_event
         progress_callback=events.append,
     )
 
-    assert builder.calls == [(extracted_record, extracted_report)]
+    assert builder.calls == [(extracted_record, extracted_report, "gb9706_1")]
     assert result.task_id == "task-record-report"
     assert result.file_name == "report.pdf"
     assert result.record_file_name == "record.pdf"
     assert result.report_file_name == "report.pdf"
     assert result.record_report_mode == "quick"
+    assert result.record_report_standard == "gb9706_1"
     assert result.record_report_concurrency == 4
     assert result.overall_status == CheckStatus.PASS
     assert result.summary.total_checks == 1
@@ -130,6 +137,7 @@ def test_record_report_service_happy_path_returns_pass_result_and_progress_event
     assert result.check_results[0].details["record_entry_count"] == 0
     assert result.check_results[0].details["codex_invoked"] is False
     assert result.check_results[0].details["record_report_mode"] == "quick"
+    assert result.check_results[0].details["record_report_standard"] == "gb9706_1"
     assert result.check_results[0].details["record_report_concurrency"] == 4
     assert judge.packages == []
     assert [event["event"] for event in events] == ["start", "done"]
@@ -236,3 +244,27 @@ def test_record_report_service_marks_missing_mapping_as_warning():
     assert result.summary.warning_count == 1
     assert result.check_results[0].findings[0].severity == "warning"
     assert result.check_results[0].missing_evidence[0].label == "报告序号 118 原始记录映射"
+
+
+def test_record_report_standard_is_normalized_and_passed_to_builder():
+    _clear_judge_cache()
+    evidence = _happy_evidence()
+    evidence["record_report_standard"] = "gb9706_202"
+    builder = FakeRecordReportEvidenceBuilder(evidence)
+    service = RecordReportCheckService(evidence_builder=builder, judge_client=FakeJudge())
+
+    result = service.check_extracted_pair(
+        {"file_name": "record.pdf"},
+        {"file_name": "report.pdf"},
+        record_report_standard="GB 9706.202-2021",
+    )
+
+    assert builder.calls[0][2] == "gb9706_202"
+    assert result.record_report_standard == "gb9706_202"
+    assert result.check_results[0].details["record_report_standard"] == "gb9706_202"
+
+
+def test_record_report_standard_defaults_to_gb9706_1_for_unknown_values():
+    assert record_report_service.normalize_record_report_standard("") == "gb9706_1"
+    assert record_report_service.normalize_record_report_standard("unknown") == "gb9706_1"
+    assert record_report_service.normalize_record_report_standard("gb9706.202") == "gb9706_202"
